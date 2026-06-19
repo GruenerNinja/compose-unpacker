@@ -18,6 +18,7 @@ type DeployCommand struct {
 	Prune                    bool     `help:"Prune services during deployment" short:"r"`
 	Keep                     bool     `help:"Keep stack folder" short:"k"`
 	Flat                     bool     `help:"Clone repository directly into destination instead of destination/stacks/project/repo." name:"flat"`
+	SourceDir                string   `help:"Repository subdirectory to sync into destination." name:"source-dir"`
 	SkipTLSVerify            bool     `help:"Skip TLS verification for git" name:"skip-tls-verify"`
 	ForceRecreateStack       bool     `help:"Force to recreate the target stack regardless whether the image hash changes" name:"force-recreate"`
 	Env                      []string `help:"OS ENV for stack" example:"key=value"`
@@ -74,6 +75,7 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		keep:          cmd.Keep,
 		mountPath:     mountPath,
 		clonePath:     clonePath,
+		sourceDir:     cmd.SourceDir,
 	}); err != nil {
 		return err
 	}
@@ -82,7 +84,13 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 
 	composeFilePaths := make([]string, len(cmd.ComposeRelativeFilePaths))
 	for i := range len(cmd.ComposeRelativeFilePaths) {
-		composeFilePaths[i] = filesystem.JoinPaths(clonePath, cmd.ComposeRelativeFilePaths[i])
+		composeRelativeFilePath, err := stripRepositorySourceDir(cmd.ComposeRelativeFilePaths[i], cmd.SourceDir)
+		if err != nil {
+			log.Error().Err(err).Msg("Invalid Compose file path")
+			return err
+		}
+
+		composeFilePaths[i] = filesystem.JoinPaths(clonePath, composeRelativeFilePath)
 	}
 
 	log.Info().

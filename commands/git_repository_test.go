@@ -99,6 +99,42 @@ func TestPrepareGitRepositoryFlatModeClonesAndSyncsDestination(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(destination, "stacks"))
 }
 
+func TestPrepareGitRepositoryFlatSourceDirClonesOnlySourceDirectory(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "repo")
+	destination := filepath.Join(tmpDir, "target")
+
+	repo := initTestRepository(t, repoPath)
+	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
+	writeTestFile(t, repoPath, "tmc-proxy/.env", "VALUE=repo\n")
+	writeTestFile(t, repoPath, "tmc-proxy/traefik/dynamic/test.yaml", "http:\n  routers: {}\n")
+	writeTestFile(t, repoPath, "other/docker-compose.yml", "services:\n  other:\n    image: alpine\n")
+	commitTestRepository(t, repo, "initial")
+
+	mountPath, clonePath := gitRepositoryDeploymentPaths(destination, "test-stack", "repo", true)
+	require.NoError(t, validateFlatDestination(destination))
+
+	ctx := exec.NewCommandExecutionContext(context.Background())
+	err := prepareGitRepository(ctx, gitRepositoryOptions{
+		repository: repoPath,
+		reference:  plumbing.NewBranchReferenceName("master").String(),
+		keep:       true,
+		mountPath:  mountPath,
+		clonePath:  clonePath,
+		sourceDir:  "tmc-proxy",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "services:\n  app:\n    image: alpine:3.20\n", readTestFile(t, destination, "docker-compose.yml"))
+	require.Equal(t, "VALUE=repo\n", readTestFile(t, destination, ".env"))
+	require.Equal(t, "http:\n  routers: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
+	require.NoDirExists(t, filepath.Join(destination, "tmc-proxy"))
+	require.NoDirExists(t, filepath.Join(destination, "other"))
+	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+}
+
 func TestPrepareGitRepositoryFlatKeepPreservesLocalChanges(t *testing.T) {
 	t.Parallel()
 
@@ -156,6 +192,69 @@ func TestPrepareGitRepositoryFlatKeepPreservesLocalChanges(t *testing.T) {
 	require.NoDirExists(t, filepath.Join(destination, "stacks"))
 }
 
+func TestPrepareGitRepositoryFlatSourceDirKeepPreservesLocalChanges(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "repo")
+	destination := filepath.Join(tmpDir, "target")
+
+	repo := initTestRepository(t, repoPath)
+	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
+	writeTestFile(t, repoPath, "tmc-proxy/.env", "VALUE=repo\n")
+	writeTestFile(t, repoPath, "tmc-proxy/traefik/dynamic/test.yaml", "http:\n  routers: {}\n")
+	writeTestFile(t, repoPath, "tmc-proxy/clean.txt", "old-clean\n")
+	writeTestFile(t, repoPath, "tmc-proxy/removed.txt", "remove-me\n")
+	writeTestFile(t, repoPath, "outside.txt", "do-not-copy\n")
+	commitTestRepository(t, repo, "initial")
+
+	mountPath, clonePath := gitRepositoryDeploymentPaths(destination, "test-stack", "repo", true)
+	ctx := exec.NewCommandExecutionContext(context.Background())
+
+	require.NoError(t, validateFlatDestination(destination))
+	err := prepareGitRepository(ctx, gitRepositoryOptions{
+		repository: repoPath,
+		reference:  plumbing.NewBranchReferenceName("master").String(),
+		keep:       true,
+		mountPath:  mountPath,
+		clonePath:  clonePath,
+		sourceDir:  "tmc-proxy",
+	})
+	require.NoError(t, err)
+
+	writeTestFile(t, destination, ".env", "VALUE=local\n")
+	writeTestFile(t, destination, "traefik/dynamic/test.yaml", "http:\n  routers:\n    local: {}\n")
+	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.21\n")
+	writeTestFile(t, repoPath, "tmc-proxy/.env", "VALUE=repo-updated\n")
+	writeTestFile(t, repoPath, "tmc-proxy/traefik/dynamic/test.yaml", "http:\n  routers:\n    repo: {}\n")
+	writeTestFile(t, repoPath, "tmc-proxy/clean.txt", "new-clean\n")
+	writeTestFile(t, repoPath, "tmc-proxy/new.txt", "new-file\n")
+	writeTestFile(t, repoPath, "outside.txt", "still-do-not-copy\n")
+	removeTestRepositoryFile(t, repo, "tmc-proxy/removed.txt")
+	commitTestRepository(t, repo, "update")
+
+	require.NoError(t, validateFlatDestination(destination))
+	err = prepareGitRepository(ctx, gitRepositoryOptions{
+		repository: repoPath,
+		reference:  plumbing.NewBranchReferenceName("master").String(),
+		keep:       true,
+		mountPath:  mountPath,
+		clonePath:  clonePath,
+		sourceDir:  "tmc-proxy",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "services:\n  app:\n    image: alpine:3.21\n", readTestFile(t, destination, "docker-compose.yml"))
+	require.Equal(t, "VALUE=local\n", readTestFile(t, destination, ".env"))
+	require.Equal(t, "http:\n  routers:\n    local: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
+	require.Equal(t, "new-clean\n", readTestFile(t, destination, "clean.txt"))
+	require.Equal(t, "new-file\n", readTestFile(t, destination, "new.txt"))
+	require.NoFileExists(t, filepath.Join(destination, "removed.txt"))
+	require.NoFileExists(t, filepath.Join(destination, "outside.txt"))
+	require.NoDirExists(t, filepath.Join(destination, "tmc-proxy"))
+	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+}
+
 func TestValidateFlatDestination(t *testing.T) {
 	t.Parallel()
 
@@ -179,6 +278,31 @@ func TestValidateFlatDestination(t *testing.T) {
 		err := validateFlatDestination(destination)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "flat destination")
+	}
+}
+
+func TestStripRepositorySourceDir(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		filePath string
+		source   string
+		expected string
+	}{
+		{name: "strips matching source prefix", filePath: "tmc-proxy/docker-compose.yml", source: "tmc-proxy", expected: "docker-compose.yml"},
+		{name: "strips leading slash and source prefix", filePath: "/tmc-proxy/docker-compose.yml", source: "tmc-proxy", expected: "docker-compose.yml"},
+		{name: "keeps already stripped path", filePath: "docker-compose.yml", source: "tmc-proxy", expected: "docker-compose.yml"},
+		{name: "keeps nested already stripped path", filePath: "compose/docker-compose.yml", source: "tmc-proxy", expected: "compose/docker-compose.yml"},
+		{name: "cleans paths", filePath: "tmc-proxy/./compose.yml", source: "tmc-proxy", expected: "compose.yml"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			actual, err := stripRepositorySourceDir(test.filePath, test.source)
+			require.NoError(t, err)
+			require.Equal(t, test.expected, actual)
+		})
 	}
 }
 

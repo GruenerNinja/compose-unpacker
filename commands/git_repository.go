@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -32,6 +33,7 @@ type gitRepositoryOptions struct {
 	keep          bool
 	mountPath     string
 	clonePath     string
+	sourceDir     string
 }
 
 var disallowedFlatDestinations = []string{
@@ -146,11 +148,22 @@ func pathWithin(candidate string, root string) bool {
 }
 
 func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepositoryOptions) error {
+	sourceDir, err := cleanRepositorySourceDir(opts.sourceDir)
+	if err != nil {
+		log.Error().Err(err).Msg("Invalid Git repository source directory")
+		return err
+	}
+	opts.sourceDir = sourceDir
+
+	if opts.sourceDir != "" {
+		return prepareGitRepositorySourceDir(cmdCtx, opts)
+	}
+
 	if !opts.keep {
 		return cloneGitRepository(cmdCtx, opts)
 	}
 
-	protectedPaths, err := protectedRepositoryPaths(opts.clonePath)
+	protectedPaths, err := protectedRepositoryPaths(opts.clonePath, opts.sourceDir)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to inspect existing Git repository")
 		return exec.ErrDeployComposeFailure
@@ -176,8 +189,51 @@ func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitReposito
 		return err
 	}
 
-	if err := syncRepositoryWorktree(tempOpts.clonePath, opts.clonePath, protectedPaths); err != nil {
+	if err := syncRepositoryWorktree(tempOpts.clonePath, opts.clonePath, protectedPaths, opts.sourceDir); err != nil {
 		log.Error().Err(err).Msg("Failed to synchronize Git repository")
+		return exec.ErrDeployComposeFailure
+	}
+
+	return nil
+}
+
+func prepareGitRepositorySourceDir(cmdCtx *exec.CommandExecutionContext, opts gitRepositoryOptions) error {
+	protectedPaths := map[string]struct{}{}
+	if opts.keep {
+		var err error
+		protectedPaths, err = protectedRepositoryPaths(opts.clonePath, opts.sourceDir)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to inspect existing Git repository")
+			return exec.ErrDeployComposeFailure
+		}
+	} else if err := os.RemoveAll(opts.mountPath); err != nil {
+		log.Error().Err(err).Msg("Failed to remove previous directory")
+		return exec.ErrDeployComposeFailure
+	}
+
+	tempMountPath, err := os.MkdirTemp("", "portainer-repo-*")
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to create temporary Git repository directory")
+		return exec.ErrDeployComposeFailure
+	}
+	defer func() {
+		if err := os.RemoveAll(tempMountPath); err != nil {
+			log.Warn().Err(err).Msg("Failed to remove temporary Git repository directory")
+		}
+	}()
+
+	tempOpts := opts
+	tempOpts.keep = false
+	tempOpts.sourceDir = ""
+	tempOpts.mountPath = tempMountPath
+	tempOpts.clonePath = filepath.Join(tempMountPath, "repo")
+
+	if err := cloneGitRepository(cmdCtx, tempOpts); err != nil {
+		return err
+	}
+
+	if err := syncRepositoryWorktree(tempOpts.clonePath, opts.clonePath, protectedPaths, opts.sourceDir); err != nil {
+		log.Error().Err(err).Msg("Failed to synchronize Git repository source directory")
 		return exec.ErrDeployComposeFailure
 	}
 
@@ -234,7 +290,7 @@ func cloneGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepository
 	return nil
 }
 
-func protectedRepositoryPaths(clonePath string) (map[string]struct{}, error) {
+func protectedRepositoryPaths(clonePath string, sourceDir string) (map[string]struct{}, error) {
 	if _, err := os.Stat(filepath.Join(clonePath, ".git")); err != nil {
 		if os.IsNotExist(err) {
 			return allExistingFiles(clonePath)
@@ -248,14 +304,14 @@ func protectedRepositoryPaths(clonePath string) (map[string]struct{}, error) {
 		return nil, err
 	}
 
-	tracked, err := trackedFiles(repo)
+	tracked, err := trackedFiles(repo, sourceDir)
 	if err != nil {
 		return nil, err
 	}
 
 	protected := map[string]struct{}{}
 	for path, file := range tracked {
-		dirty, err := trackedFileDirty(clonePath, file)
+		dirty, err := trackedFileDirty(clonePath, path, file)
 		if err != nil {
 			return nil, err
 		}
@@ -328,7 +384,7 @@ func allExistingFiles(root string) (map[string]struct{}, error) {
 	return protected, nil
 }
 
-func trackedFiles(repo *git.Repository) (map[string]*object.File, error) {
+func trackedFiles(repo *git.Repository, sourceDir string) (map[string]*object.File, error) {
 	head, err := repo.Head()
 	if err != nil {
 		return nil, err
@@ -346,7 +402,11 @@ func trackedFiles(repo *git.Repository) (map[string]*object.File, error) {
 	}
 
 	if err := iter.ForEach(func(file *object.File) error {
-		files[file.Name] = file
+		targetPath, ok := targetPathForRepositoryFile(file.Name, sourceDir)
+		if ok {
+			files[targetPath] = file
+		}
+
 		return nil
 	}); err != nil {
 		return nil, err
@@ -355,8 +415,8 @@ func trackedFiles(repo *git.Repository) (map[string]*object.File, error) {
 	return files, nil
 }
 
-func trackedFileDirty(root string, file *object.File) (bool, error) {
-	currentPath := filepath.Join(root, filepath.FromSlash(file.Name))
+func trackedFileDirty(root string, targetPath string, file *object.File) (bool, error) {
+	currentPath := filepath.Join(root, filepath.FromSlash(targetPath))
 	info, err := os.Lstat(currentPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -390,6 +450,20 @@ func trackedFileDirty(root string, file *object.File) (bool, error) {
 	return !equal, nil
 }
 
+func targetPathForRepositoryFile(repositoryPath string, sourceDir string) (string, bool) {
+	if sourceDir == "" {
+		return repositoryPath, true
+	}
+
+	prefix := sourceDir + "/"
+	if !strings.HasPrefix(repositoryPath, prefix) {
+		return "", false
+	}
+
+	targetPath := strings.TrimPrefix(repositoryPath, prefix)
+	return targetPath, targetPath != ""
+}
+
 func readersEqual(left io.Reader, right io.Reader) (bool, error) {
 	leftBytes, err := io.ReadAll(left)
 	if err != nil {
@@ -404,13 +478,13 @@ func readersEqual(left io.Reader, right io.Reader) (bool, error) {
 	return bytes.Equal(leftBytes, rightBytes), nil
 }
 
-func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths map[string]struct{}) error {
+func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths map[string]struct{}, sourceDir string) error {
 	sourceRepo, err := git.PlainOpen(sourcePath)
 	if err != nil {
 		return err
 	}
 
-	sourceTracked, err := trackedFiles(sourceRepo)
+	sourceTracked, err := trackedFiles(sourceRepo, sourceDir)
 	if err != nil {
 		return err
 	}
@@ -421,7 +495,7 @@ func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths
 			return err
 		}
 
-		targetTracked, err := trackedFiles(targetRepo)
+		targetTracked, err := trackedFiles(targetRepo, sourceDir)
 		if err != nil {
 			return err
 		}
@@ -441,7 +515,8 @@ func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths
 		}
 	}
 
-	if err := copyRepositoryFiles(sourcePath, targetPath, protectedPaths); err != nil {
+	sourceWorktreePath := filepath.Join(sourcePath, filepath.FromSlash(sourceDir))
+	if err := copyRepositoryFiles(sourceWorktreePath, targetPath, protectedPaths); err != nil {
 		return err
 	}
 
@@ -502,6 +577,61 @@ func hasProtectedDescendant(protectedPaths map[string]struct{}, path string) boo
 	}
 
 	return false
+}
+
+func cleanRepositorySourceDir(sourceDir string) (string, error) {
+	sourceDir = strings.TrimSpace(sourceDir)
+	if sourceDir == "" {
+		return "", nil
+	}
+
+	if path.IsAbs(sourceDir) || filepath.VolumeName(sourceDir) != "" || strings.Contains(sourceDir, `\`) {
+		return "", fmt.Errorf("source directory %q must be a relative repository path", sourceDir)
+	}
+
+	cleaned := path.Clean(sourceDir)
+	if cleaned == "." {
+		return "", nil
+	}
+
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("source directory %q cannot traverse outside the repository", sourceDir)
+	}
+
+	return cleaned, nil
+}
+
+func stripRepositorySourceDir(filePath string, sourceDir string) (string, error) {
+	sourceDir, err := cleanRepositorySourceDir(sourceDir)
+	if err != nil {
+		return "", err
+	}
+
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return "", fmt.Errorf("compose file path cannot be empty")
+	}
+
+	filePath = strings.TrimLeft(filePath, "/")
+	if filepath.VolumeName(filePath) != "" || strings.Contains(filePath, `\`) {
+		return "", fmt.Errorf("compose file path %q must be a relative repository path", filePath)
+	}
+
+	cleaned := path.Clean(filePath)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("compose file path %q cannot traverse outside the repository", filePath)
+	}
+
+	if sourceDir == "" {
+		return cleaned, nil
+	}
+
+	targetPath, ok := targetPathForRepositoryFile(cleaned, sourceDir)
+	if ok {
+		return targetPath, nil
+	}
+
+	return cleaned, nil
 }
 
 func copyPath(source string, target string) error {
