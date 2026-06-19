@@ -2,22 +2,13 @@ package commands
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
-	"github.com/portainer/compose-unpacker/auth"
 	"github.com/portainer/compose-unpacker/exec"
 	"github.com/portainer/portainer/api/filesystem"
-	portainergit "github.com/portainer/portainer/api/git"
-	"github.com/portainer/portainer/pkg/fips"
 	"github.com/portainer/portainer/pkg/libstack"
 	"github.com/portainer/portainer/pkg/libstack/compose"
 
-	"github.com/go-git/go-billy/v5/osfs"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/cache"
-	gogitfs "github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/rs/zerolog/log"
 )
 
@@ -67,53 +58,17 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 
 	mountPath := exec.MakeWorkingDir(cmd.Destination, cmd.ProjectName)
 	clonePath := filesystem.JoinPaths(mountPath, repositoryName)
-	if !cmd.Keep { // Stack create request
-		if _, err := os.Stat(mountPath); err == nil {
-			if err := os.RemoveAll(mountPath); err != nil {
-				log.Error().
-					Err(err).
-					Msg("Failed to remove previous directory")
-				return exec.ErrDeployComposeFailure
-			}
-		}
-
-		if err := os.MkdirAll(mountPath, 0755); err != nil {
-			log.Error().
-				Err(err).
-				Msg("Failed to create destination directory")
-			return exec.ErrDeployComposeFailure
-		}
-
-		log.Info().
-			Str("directory", mountPath).
-			Msg("Creating target destination directory on disk")
-
-		gitOptions := git.CloneOptions{
-			URL:             cmd.GitRepository,
-			ReferenceName:   plumbing.ReferenceName(cmd.Reference),
-			Auth:            auth.GetAuth(cmd.User, cmd.Password),
-			Depth:           1,
-			InsecureSkipTLS: cmd.SkipTLSVerify && fips.CanTLSSkipVerify(),
-			Tags:            git.NoTags,
-		}
-
-		log.Info().
-			Str("repository", cmd.GitRepository).
-			Str("path", clonePath).
-			Str("url", gitOptions.URL).
-			Int("depth", gitOptions.Depth).
-			Msg("Cloning git repository")
-
-		wt := portainergit.NewNoSymlinkFS(osfs.New(clonePath))
-		dot := osfs.New(filesystem.JoinPaths(clonePath, ".git"))
-		storer := gogitfs.NewStorage(dot, cache.NewObjectLRU(0))
-
-		if _, err := git.CloneContext(cmdCtx.Context, storer, wt, &gitOptions); err != nil {
-			log.Error().
-				Err(err).
-				Msg("Failed to clone Git repository")
-			return exec.ErrDeployComposeFailure
-		}
+	if err := prepareGitRepository(cmdCtx, gitRepositoryOptions{
+		repository:    cmd.GitRepository,
+		reference:     cmd.Reference,
+		user:          cmd.User,
+		password:      cmd.Password,
+		skipTLSVerify: cmd.SkipTLSVerify,
+		keep:          cmd.Keep,
+		mountPath:     mountPath,
+		clonePath:     clonePath,
+	}); err != nil {
+		return err
 	}
 
 	deployer := compose.NewComposeDeployer()

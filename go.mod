@@ -2,7 +2,7 @@ module github.com/portainer/compose-unpacker
 
 go 1.26.4
 
-replace github.com/portainer/portainer => ../../../package/server-ce
+replace github.com/portainer/portainer => ../portainer
 
 require (
 	github.com/alecthomas/kong v0.6.1
