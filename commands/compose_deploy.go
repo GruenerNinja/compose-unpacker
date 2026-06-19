@@ -57,6 +57,13 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		Str("directory", cmd.Destination).
 		Msg("Checking the file system...")
 
+	if cmd.Flat {
+		if err := validateFlatDestination(cmd.Destination); err != nil {
+			log.Error().Err(err).Msg("Invalid flat destination")
+			return err
+		}
+	}
+
 	mountPath, clonePath := gitRepositoryDeploymentPaths(cmd.Destination, cmd.ProjectName, repositoryName, cmd.Flat)
 	if err := prepareGitRepository(cmdCtx, gitRepositoryOptions{
 		repository:    cmd.GitRepository,

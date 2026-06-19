@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,6 +34,20 @@ type gitRepositoryOptions struct {
 	clonePath     string
 }
 
+var disallowedFlatDestinations = []string{
+	string(filepath.Separator),
+	string(filepath.Separator) + "bin",
+	string(filepath.Separator) + "dev",
+	string(filepath.Separator) + "etc",
+	string(filepath.Separator) + "proc",
+	string(filepath.Separator) + "run",
+	string(filepath.Separator) + "root",
+	string(filepath.Separator) + "sbin",
+	string(filepath.Separator) + "sys",
+	string(filepath.Separator) + "usr",
+	filepath.Join(string(filepath.Separator), "var", "run"),
+}
+
 func gitRepositoryDeploymentPaths(destination string, projectName string, repositoryName string, flat bool) (string, string) {
 	mountPath := exec.MakeWorkingDir(destination, projectName)
 	clonePath := filesystem.JoinPaths(mountPath, repositoryName)
@@ -50,6 +65,84 @@ func gitRepositoryMountPath(destination string, projectName string, flat bool) s
 	}
 
 	return exec.MakeWorkingDir(destination, projectName)
+}
+
+func validateFlatDestination(destination string) error {
+	trimmedDestination := strings.TrimSpace(destination)
+	if trimmedDestination == "" {
+		return fmt.Errorf("flat destination is required")
+	}
+
+	cleanDestination := filepath.Clean(trimmedDestination)
+	if !filepath.IsAbs(cleanDestination) {
+		return fmt.Errorf("flat destination %q must be absolute", cleanDestination)
+	}
+
+	if err := rejectDisallowedFlatDestination(cleanDestination); err != nil {
+		return err
+	}
+
+	parent := filepath.Dir(cleanDestination)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return fmt.Errorf("flat destination parent %q cannot be created: %w", parent, err)
+	}
+
+	if err := os.MkdirAll(cleanDestination, 0755); err != nil {
+		return fmt.Errorf("flat destination %q cannot be created: %w", cleanDestination, err)
+	}
+
+	resolvedDestination, err := filepath.EvalSymlinks(cleanDestination)
+	if err != nil {
+		return fmt.Errorf("flat destination %q cannot be resolved: %w", cleanDestination, err)
+	}
+
+	if err := rejectDisallowedFlatDestination(resolvedDestination); err != nil {
+		return err
+	}
+
+	probe, err := os.CreateTemp(cleanDestination, ".portainer-write-test-*")
+	if err != nil {
+		return fmt.Errorf("flat destination %q is not writable: %w", cleanDestination, err)
+	}
+
+	probeName := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(probeName)
+		return fmt.Errorf("flat destination %q is not writable: %w", cleanDestination, err)
+	}
+
+	if err := os.Remove(probeName); err != nil {
+		return fmt.Errorf("flat destination %q write test cleanup failed: %w", cleanDestination, err)
+	}
+
+	return nil
+}
+
+func rejectDisallowedFlatDestination(destination string) error {
+	for _, disallowed := range disallowedFlatDestinations {
+		if pathWithin(destination, disallowed) {
+			return fmt.Errorf("flat destination %q is not allowed", destination)
+		}
+	}
+
+	return nil
+}
+
+func pathWithin(candidate string, root string) bool {
+	cleanRoot := filepath.Clean(root)
+	if candidate == cleanRoot {
+		return true
+	}
+	if cleanRoot == string(filepath.Separator) {
+		return false
+	}
+
+	rel, err := filepath.Rel(cleanRoot, candidate)
+	if err != nil {
+		return false
+	}
+
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepositoryOptions) error {

@@ -37,6 +37,13 @@ func (cmd *UndeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		return exec.ErrDeployComposeFailure
 	}
 
+	if cmd.Flat {
+		if err := validateFlatDestination(cmd.Destination); err != nil {
+			log.Error().Err(err).Msg("Invalid flat destination")
+			return err
+		}
+	}
+
 	mountPath := gitRepositoryMountPath(cmd.Destination, cmd.ProjectName, cmd.Flat)
 
 	deployer := compose.NewComposeDeployer()

@@ -30,6 +30,13 @@ func (cmd *SwarmUndeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error
 		return err
 	}
 
+	if cmd.Flat {
+		if err := validateFlatDestination(cmd.Destination); err != nil {
+			log.Error().Err(err).Msg("Invalid flat destination")
+			return err
+		}
+	}
+
 	mountPath := gitRepositoryMountPath(cmd.Destination, cmd.ProjectName, cmd.Flat)
 	if !cmd.Keep { //stack stop request
 		if err := os.RemoveAll(mountPath); err != nil {
