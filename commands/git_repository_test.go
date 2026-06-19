@@ -65,6 +65,58 @@ func TestPrepareGitRepositoryKeepPreservesLocalChanges(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(clonePath, "removed.txt"))
 }
 
+func TestPrepareGitRepositoryFlatModeClonesAndSyncsDestination(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "repo")
+	destination := filepath.Join(tmpDir, "target")
+
+	repo := initTestRepository(t, repoPath)
+	writeTestFile(t, repoPath, "docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
+	writeTestFile(t, repoPath, ".env", "VALUE=repo\n")
+	writeTestFile(t, repoPath, "traefik/dynamic/npm-fallback.yaml", "http:\n  routers: {}\n")
+	commitTestRepository(t, repo, "initial")
+
+	mountPath, clonePath := gitRepositoryDeploymentPaths(destination, "test-stack", "repo", true)
+	require.Equal(t, destination, mountPath)
+	require.Equal(t, destination, clonePath)
+
+	ctx := exec.NewCommandExecutionContext(context.Background())
+	err := prepareGitRepository(ctx, gitRepositoryOptions{
+		repository: repoPath,
+		reference:  plumbing.NewBranchReferenceName("master").String(),
+		mountPath:  mountPath,
+		clonePath:  clonePath,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "services:\n  app:\n    image: alpine:3.20\n", readTestFile(t, destination, "docker-compose.yml"))
+	require.Equal(t, "VALUE=repo\n", readTestFile(t, destination, ".env"))
+	require.Equal(t, "http:\n  routers: {}\n", readTestFile(t, destination, "traefik/dynamic/npm-fallback.yaml"))
+	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+
+	writeTestFile(t, destination, ".env", "VALUE=local\n")
+	writeTestFile(t, repoPath, "docker-compose.yml", "services:\n  app:\n    image: alpine:3.21\n")
+	writeTestFile(t, repoPath, ".env", "VALUE=repo-updated\n")
+	writeTestFile(t, repoPath, "traefik/dynamic/npm-fallback.yaml", "http:\n  services: {}\n")
+	commitTestRepository(t, repo, "update")
+
+	err = prepareGitRepository(ctx, gitRepositoryOptions{
+		repository: repoPath,
+		reference:  plumbing.NewBranchReferenceName("master").String(),
+		keep:       true,
+		mountPath:  mountPath,
+		clonePath:  clonePath,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "services:\n  app:\n    image: alpine:3.21\n", readTestFile(t, destination, "docker-compose.yml"))
+	require.Equal(t, "VALUE=local\n", readTestFile(t, destination, ".env"))
+	require.Equal(t, "http:\n  services: {}\n", readTestFile(t, destination, "traefik/dynamic/npm-fallback.yaml"))
+	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+}
+
 func initTestRepository(t *testing.T, path string) *git.Repository {
 	t.Helper()
 

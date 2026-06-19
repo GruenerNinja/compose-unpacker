@@ -33,6 +33,25 @@ type gitRepositoryOptions struct {
 	clonePath     string
 }
 
+func gitRepositoryDeploymentPaths(destination string, projectName string, repositoryName string, flat bool) (string, string) {
+	mountPath := exec.MakeWorkingDir(destination, projectName)
+	clonePath := filesystem.JoinPaths(mountPath, repositoryName)
+	if flat {
+		mountPath = destination
+		clonePath = destination
+	}
+
+	return mountPath, clonePath
+}
+
+func gitRepositoryMountPath(destination string, projectName string, flat bool) string {
+	if flat {
+		return destination
+	}
+
+	return exec.MakeWorkingDir(destination, projectName)
+}
+
 func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepositoryOptions) error {
 	if !opts.keep {
 		return cloneGitRepository(cmdCtx, opts)
@@ -80,7 +99,12 @@ func cloneGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepository
 		}
 	}
 
-	if err := os.MkdirAll(opts.mountPath, 0755); err != nil {
+	createPath := opts.mountPath
+	if opts.mountPath == opts.clonePath {
+		createPath = filepath.Dir(opts.mountPath)
+	}
+
+	if err := os.MkdirAll(createPath, 0755); err != nil {
 		log.Error().Err(err).Msg("Failed to create destination directory")
 		return exec.ErrDeployComposeFailure
 	}

@@ -14,6 +14,7 @@ type UndeployCommand struct {
 	User          string `help:"Username for Git authentication." short:"u"`
 	Password      string `help:"Password or PAT for Git authentication" short:"p"`
 	Keep          bool   `help:"Keep stack folder" short:"k"`
+	Flat          bool   `help:"Clone repository directly into destination instead of destination/stacks/project/repo." name:"flat"`
 	RemoveVolumes bool   `help:"Remove volumes" short:"v"`
 
 	GitRepository            string   `arg:"" help:"Git repository to deploy from." name:"git-repo"`
@@ -36,7 +37,7 @@ func (cmd *UndeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		return exec.ErrDeployComposeFailure
 	}
 
-	mountPath := exec.MakeWorkingDir(cmd.Destination, cmd.ProjectName)
+	mountPath := gitRepositoryMountPath(cmd.Destination, cmd.ProjectName, cmd.Flat)
 
 	deployer := compose.NewComposeDeployer()
 

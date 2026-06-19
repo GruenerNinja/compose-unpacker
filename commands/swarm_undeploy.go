@@ -10,6 +10,7 @@ import (
 
 type SwarmUndeployCommand struct {
 	Keep        bool   `help:"Keep stack folder" short:"k"`
+	Flat        bool   `help:"Clone repository directly into destination instead of destination/stacks/project/repo." name:"flat"`
 	ProjectName string `arg:"" help:"Name of the Compose (Swarm) stack." name:"project-name"`
 	Destination string `arg:"" help:"Path on disk where the Git repository will be cloned." type:"path" name:"destination"`
 }
@@ -29,7 +30,7 @@ func (cmd *SwarmUndeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error
 		return err
 	}
 
-	mountPath := exec.MakeWorkingDir(cmd.Destination, cmd.ProjectName)
+	mountPath := gitRepositoryMountPath(cmd.Destination, cmd.ProjectName, cmd.Flat)
 	if !cmd.Keep { //stack stop request
 		if err := os.RemoveAll(mountPath); err != nil {
 			log.Error().

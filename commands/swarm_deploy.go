@@ -17,6 +17,7 @@ type SwarmDeployCommand struct {
 	Pull                     bool     `help:"Pull Image" short:"f"`
 	Prune                    bool     `help:"Prune services during deployment" short:"r"`
 	Keep                     bool     `help:"Keep stack folder" short:"k"`
+	Flat                     bool     `help:"Clone repository directly into destination instead of destination/stacks/project/repo." name:"flat"`
 	SkipTLSVerify            bool     `help:"Skip TLS verification for git" name:"skip-tls-verify"`
 	ForceRecreateStack       bool     `help:"Force to recreate the target stack regardless whether the image hash changes" name:"force-recreate"`
 	Env                      []string `help:"OS ENV for stack."`
@@ -55,8 +56,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		Str("directory", cmd.Destination).
 		Msg("Checking the file system...")
 
-	mountPath := exec.MakeWorkingDir(cmd.Destination, cmd.ProjectName)
-	clonePath := filesystem.JoinPaths(mountPath, repositoryName)
+	mountPath, clonePath := gitRepositoryDeploymentPaths(cmd.Destination, cmd.ProjectName, repositoryName, cmd.Flat)
 
 	if err := prepareGitRepository(cmdCtx, gitRepositoryOptions{
 		repository:    cmd.GitRepository,
