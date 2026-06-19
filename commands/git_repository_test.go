@@ -223,6 +223,7 @@ func TestPrepareGitRepositoryFlatSourceDirKeepPreservesLocalChanges(t *testing.T
 	require.NoError(t, err)
 
 	writeTestFile(t, destination, ".env", "VALUE=local\n")
+	writeTestFile(t, destination, "docker-compose.yml", "services:\n  app:\n    image: local\n")
 	writeTestFile(t, destination, "traefik/dynamic/test.yaml", "http:\n  routers:\n    local: {}\n")
 	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.21\n")
 	writeTestFile(t, repoPath, "tmc-proxy/.env", "VALUE=repo-updated\n")
@@ -244,7 +245,7 @@ func TestPrepareGitRepositoryFlatSourceDirKeepPreservesLocalChanges(t *testing.T
 	})
 	require.NoError(t, err)
 
-	require.Equal(t, "services:\n  app:\n    image: alpine:3.21\n", readTestFile(t, destination, "docker-compose.yml"))
+	require.Equal(t, "services:\n  app:\n    image: local\n", readTestFile(t, destination, "docker-compose.yml"))
 	require.Equal(t, "VALUE=local\n", readTestFile(t, destination, ".env"))
 	require.Equal(t, "http:\n  routers:\n    local: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
 	require.Equal(t, "new-clean\n", readTestFile(t, destination, "clean.txt"))
@@ -253,6 +254,62 @@ func TestPrepareGitRepositoryFlatSourceDirKeepPreservesLocalChanges(t *testing.T
 	require.NoFileExists(t, filepath.Join(destination, "outside.txt"))
 	require.NoDirExists(t, filepath.Join(destination, "tmc-proxy"))
 	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+}
+
+func TestPrepareGitRepositoryFlatSourceDirManagedFilesRestoresMissingDeploymentFiles(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "repo")
+	destination := filepath.Join(tmpDir, "target")
+
+	repo := initTestRepository(t, repoPath)
+	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
+	writeTestFile(t, repoPath, "tmc-proxy/.env", "VALUE=repo\n")
+	writeTestFile(t, repoPath, "tmc-proxy/portainer.yml", "version: 1\n")
+	writeTestFile(t, repoPath, "tmc-proxy/traefik/dynamic/test.yaml", "http:\n  routers: {}\n")
+	commitTestRepository(t, repo, "initial")
+
+	mountPath, clonePath := gitRepositoryDeploymentPaths(destination, "test-stack", "repo", true)
+	ctx := exec.NewCommandExecutionContext(context.Background())
+
+	require.NoError(t, validateFlatDestination(destination))
+	err := prepareGitRepository(ctx, gitRepositoryOptions{
+		repository: repoPath,
+		reference:  plumbing.NewBranchReferenceName("master").String(),
+		keep:       true,
+		mountPath:  mountPath,
+		clonePath:  clonePath,
+		sourceDir:  "tmc-proxy",
+	})
+	require.NoError(t, err)
+
+	managedFiles := deploymentFiles([]string{"docker-compose.yml"})
+	require.NoError(t, finalizeDeploymentFiles(destination, "", managedFiles, true))
+	require.NoFileExists(t, filepath.Join(destination, "docker-compose.yml"))
+	require.NoFileExists(t, filepath.Join(destination, ".env"))
+	require.NoFileExists(t, filepath.Join(destination, "portainer.yml"))
+
+	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.21\n")
+	writeTestFile(t, repoPath, "tmc-proxy/.env", "VALUE=repo-updated\n")
+	writeTestFile(t, repoPath, "tmc-proxy/portainer.yml", "version: 1\n")
+	commitTestRepository(t, repo, "update deployment files")
+
+	err = prepareGitRepository(ctx, gitRepositoryOptions{
+		repository:            repoPath,
+		reference:             plumbing.NewBranchReferenceName("master").String(),
+		keep:                  true,
+		mountPath:             mountPath,
+		clonePath:             clonePath,
+		sourceDir:             "tmc-proxy",
+		unprotectMissingPaths: deploymentFileSet(managedFiles),
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "services:\n  app:\n    image: alpine:3.21\n", readTestFile(t, destination, "docker-compose.yml"))
+	require.Equal(t, "VALUE=repo-updated\n", readTestFile(t, destination, ".env"))
+	require.Equal(t, "version: 1\n", readTestFile(t, destination, "portainer.yml"))
+	require.Equal(t, "http:\n  routers: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
 }
 
 func TestValidateFlatDestination(t *testing.T) {

@@ -25,15 +25,16 @@ import (
 )
 
 type gitRepositoryOptions struct {
-	repository    string
-	reference     string
-	user          string
-	password      string
-	skipTLSVerify bool
-	keep          bool
-	mountPath     string
-	clonePath     string
-	sourceDir     string
+	repository            string
+	reference             string
+	user                  string
+	password              string
+	skipTLSVerify         bool
+	keep                  bool
+	mountPath             string
+	clonePath             string
+	sourceDir             string
+	unprotectMissingPaths map[string]struct{}
 }
 
 var disallowedFlatDestinations = []string{
@@ -163,7 +164,7 @@ func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitReposito
 		return cloneGitRepository(cmdCtx, opts)
 	}
 
-	protectedPaths, err := protectedRepositoryPaths(opts.clonePath, opts.sourceDir)
+	protectedPaths, err := protectedRepositoryPaths(opts.clonePath, opts.sourceDir, opts.unprotectMissingPaths)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to inspect existing Git repository")
 		return exec.ErrDeployComposeFailure
@@ -201,7 +202,7 @@ func prepareGitRepositorySourceDir(cmdCtx *exec.CommandExecutionContext, opts gi
 	protectedPaths := map[string]struct{}{}
 	if opts.keep {
 		var err error
-		protectedPaths, err = protectedRepositoryPaths(opts.clonePath, opts.sourceDir)
+		protectedPaths, err = protectedRepositoryPaths(opts.clonePath, opts.sourceDir, opts.unprotectMissingPaths)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to inspect existing Git repository")
 			return exec.ErrDeployComposeFailure
@@ -290,7 +291,7 @@ func cloneGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepository
 	return nil
 }
 
-func protectedRepositoryPaths(clonePath string, sourceDir string) (map[string]struct{}, error) {
+func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissingPaths map[string]struct{}) (map[string]struct{}, error) {
 	if _, err := os.Stat(filepath.Join(clonePath, ".git")); err != nil {
 		if os.IsNotExist(err) {
 			return allExistingFiles(clonePath)
@@ -311,9 +312,15 @@ func protectedRepositoryPaths(clonePath string, sourceDir string) (map[string]st
 
 	protected := map[string]struct{}{}
 	for path, file := range tracked {
-		dirty, err := trackedFileDirty(clonePath, path, file)
+		dirty, missing, err := trackedFileDirty(clonePath, path, file)
 		if err != nil {
 			return nil, err
+		}
+
+		if missing {
+			if _, unprotected := unprotectMissingPaths[path]; unprotected {
+				continue
+			}
 		}
 
 		if dirty {
@@ -415,39 +422,39 @@ func trackedFiles(repo *git.Repository, sourceDir string) (map[string]*object.Fi
 	return files, nil
 }
 
-func trackedFileDirty(root string, targetPath string, file *object.File) (bool, error) {
+func trackedFileDirty(root string, targetPath string, file *object.File) (bool, bool, error) {
 	currentPath := filepath.Join(root, filepath.FromSlash(targetPath))
 	info, err := os.Lstat(currentPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return true, nil
+			return true, true, nil
 		}
 
-		return false, err
+		return false, false, err
 	}
 
 	if !info.Mode().IsRegular() {
-		return true, nil
+		return true, false, nil
 	}
 
 	currentFile, err := os.Open(currentPath)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	defer currentFile.Close()
 
 	blobReader, err := file.Reader()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	defer blobReader.Close()
 
 	equal, err := readersEqual(currentFile, blobReader)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
-	return !equal, nil
+	return !equal, false, nil
 }
 
 func targetPathForRepositoryFile(repositoryPath string, sourceDir string) (string, bool) {

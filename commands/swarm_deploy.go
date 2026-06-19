@@ -19,6 +19,8 @@ type SwarmDeployCommand struct {
 	Keep                     bool     `help:"Keep stack folder" short:"k"`
 	Flat                     bool     `help:"Clone repository directly into destination instead of destination/stacks/project/repo." name:"flat"`
 	SourceDir                string   `help:"Repository subdirectory to sync into destination." name:"source-dir"`
+	DeploymentDir            string   `help:"Directory used to archive deployment files after successful deploy." name:"deployment-dir"`
+	CleanupDeploymentFiles   bool     `help:"Remove deployment files after successful deploy instead of archiving them." name:"cleanup-deployment-files"`
 	SkipTLSVerify            bool     `help:"Skip TLS verification for git" name:"skip-tls-verify"`
 	ForceRecreateStack       bool     `help:"Force to recreate the target stack regardless whether the image hash changes" name:"force-recreate"`
 	Env                      []string `help:"OS ENV for stack."`
@@ -64,25 +66,14 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		}
 	}
 
-	mountPath, clonePath := gitRepositoryDeploymentPaths(cmd.Destination, cmd.ProjectName, repositoryName, cmd.Flat)
-
-	if err := prepareGitRepository(cmdCtx, gitRepositoryOptions{
-		repository:    cmd.GitRepository,
-		reference:     cmd.Reference,
-		user:          cmd.User,
-		password:      cmd.Password,
-		skipTLSVerify: cmd.SkipTLSVerify,
-		keep:          cmd.Keep,
-		mountPath:     mountPath,
-		clonePath:     clonePath,
-		sourceDir:     cmd.SourceDir,
-	}); err != nil {
+	deploymentDir, err := cleanDeploymentDir(cmd.DeploymentDir)
+	if err != nil {
+		log.Error().Err(err).Msg("Invalid deployment directory")
 		return err
 	}
 
-	deployer := swarm.NewSwarmDeployer()
-
-	composeFilePaths := make([]string, len(cmd.ComposeRelativeFilePaths))
+	mountPath, clonePath := gitRepositoryDeploymentPaths(cmd.Destination, cmd.ProjectName, repositoryName, cmd.Flat)
+	composeRelativeFilePaths := make([]string, len(cmd.ComposeRelativeFilePaths))
 	for i := range len(cmd.ComposeRelativeFilePaths) {
 		composeRelativeFilePath, err := stripRepositorySourceDir(cmd.ComposeRelativeFilePaths[i], cmd.SourceDir)
 		if err != nil {
@@ -90,7 +81,42 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 			return err
 		}
 
-		composeFilePaths[i] = filesystem.JoinPaths(clonePath, composeRelativeFilePath)
+		composeRelativeFilePaths[i] = composeRelativeFilePath
+	}
+
+	manageDeploymentFiles := cmd.Flat && strings.TrimSpace(cmd.SourceDir) != "" && (deploymentDir != "" || cmd.CleanupDeploymentFiles)
+	deploymentFilePaths := deploymentFiles(composeRelativeFilePaths)
+	var unprotectMissingPaths map[string]struct{}
+	if manageDeploymentFiles {
+		unprotectMissingPaths = deploymentFileSet(deploymentFilePaths)
+	}
+	if manageDeploymentFiles && deploymentDir != "" {
+		if err := restoreDeploymentFiles(clonePath, deploymentDir, deploymentFilePaths); err != nil {
+			log.Error().Err(err).Msg("Failed to restore archived deployment files")
+			return err
+		}
+	}
+
+	if err := prepareGitRepository(cmdCtx, gitRepositoryOptions{
+		repository:            cmd.GitRepository,
+		reference:             cmd.Reference,
+		user:                  cmd.User,
+		password:              cmd.Password,
+		skipTLSVerify:         cmd.SkipTLSVerify,
+		keep:                  cmd.Keep,
+		mountPath:             mountPath,
+		clonePath:             clonePath,
+		sourceDir:             cmd.SourceDir,
+		unprotectMissingPaths: unprotectMissingPaths,
+	}); err != nil {
+		return err
+	}
+
+	deployer := swarm.NewSwarmDeployer()
+
+	composeFilePaths := make([]string, len(composeRelativeFilePaths))
+	for i := range len(composeRelativeFilePaths) {
+		composeFilePaths[i] = filesystem.JoinPaths(clonePath, composeRelativeFilePaths[i])
 	}
 
 	registries := exec.ParseRegistryCredentials(cmd.Registry)
@@ -116,6 +142,13 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 			Err(err).
 			Msg("Failed to deploy Swarm stack")
 		return fmt.Errorf("%w: %w", exec.ErrDeployComposeFailure, err)
+	}
+
+	if manageDeploymentFiles {
+		if err := finalizeDeploymentFilesAfterDeploy(clonePath, deploymentDir, deploymentFilePaths, cmd.CleanupDeploymentFiles, nil); err != nil {
+			log.Error().Err(err).Msg("Failed to finalize deployment files")
+			return fmt.Errorf("%w: %w", exec.ErrDeployComposeFailure, err)
+		}
 	}
 
 	log.Info().Msg("Swarm stack deployment complete")
