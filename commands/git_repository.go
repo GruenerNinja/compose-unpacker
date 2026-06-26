@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,7 +49,7 @@ var disallowedFlatDestinations = []string{
 	string(filepath.Separator) + "sbin",
 	string(filepath.Separator) + "sys",
 	string(filepath.Separator) + "usr",
-	filepath.Join(string(filepath.Separator), "var", "run"),
+	string(filepath.Separator) + "var" + string(filepath.Separator) + "run",
 }
 
 func gitRepositoryDeploymentPaths(destination string, projectName string, repositoryName string, flat bool) (string, string) {
@@ -73,7 +74,7 @@ func gitRepositoryMountPath(destination string, projectName string, flat bool) s
 func validateFlatDestination(destination string) error {
 	trimmedDestination := strings.TrimSpace(destination)
 	if trimmedDestination == "" {
-		return fmt.Errorf("flat destination is required")
+		return errors.New("flat destination is required")
 	}
 
 	cleanDestination := filepath.Clean(trimmedDestination)
@@ -184,7 +185,7 @@ func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitReposito
 	tempOpts := opts
 	tempOpts.keep = false
 	tempOpts.mountPath = tempMountPath
-	tempOpts.clonePath = filepath.Join(tempMountPath, "repo")
+	tempOpts.clonePath = filesystem.JoinPaths(tempMountPath, "repo")
 
 	if err := cloneGitRepository(cmdCtx, tempOpts); err != nil {
 		return err
@@ -227,7 +228,7 @@ func prepareGitRepositorySourceDir(cmdCtx *exec.CommandExecutionContext, opts gi
 	tempOpts.keep = false
 	tempOpts.sourceDir = ""
 	tempOpts.mountPath = tempMountPath
-	tempOpts.clonePath = filepath.Join(tempMountPath, "repo")
+	tempOpts.clonePath = filesystem.JoinPaths(tempMountPath, "repo")
 
 	if err := cloneGitRepository(cmdCtx, tempOpts); err != nil {
 		return err
@@ -292,7 +293,7 @@ func cloneGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepository
 }
 
 func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissingPaths map[string]struct{}) (map[string]struct{}, error) {
-	if _, err := os.Stat(filepath.Join(clonePath, ".git")); err != nil {
+	if _, err := os.Stat(filesystem.JoinPaths(clonePath, ".git")); err != nil {
 		if os.IsNotExist(err) {
 			return allExistingFiles(clonePath)
 		}
@@ -423,7 +424,7 @@ func trackedFiles(repo *git.Repository, sourceDir string) (map[string]*object.Fi
 }
 
 func trackedFileDirty(root string, targetPath string, file *object.File) (bool, bool, error) {
-	currentPath := filepath.Join(root, filepath.FromSlash(targetPath))
+	currentPath := filesystem.JoinPaths(root, targetPath)
 	info, err := os.Lstat(currentPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -441,13 +442,13 @@ func trackedFileDirty(root string, targetPath string, file *object.File) (bool, 
 	if err != nil {
 		return false, false, err
 	}
-	defer currentFile.Close()
+	defer func() { _ = currentFile.Close() }()
 
 	blobReader, err := file.Reader()
 	if err != nil {
 		return false, false, err
 	}
-	defer blobReader.Close()
+	defer func() { _ = blobReader.Close() }()
 
 	equal, err := readersEqual(currentFile, blobReader)
 	if err != nil {
@@ -496,7 +497,7 @@ func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths
 		return err
 	}
 
-	if _, err := os.Stat(filepath.Join(targetPath, ".git")); err == nil {
+	if _, err := os.Stat(filesystem.JoinPaths(targetPath, ".git")); err == nil {
 		targetRepo, err := git.PlainOpen(targetPath)
 		if err != nil {
 			return err
@@ -516,22 +517,25 @@ func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths
 				continue
 			}
 
-			if err := os.Remove(filepath.Join(targetPath, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
+			if err := os.Remove(filesystem.JoinPaths(targetPath, path)); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}
 	}
 
-	sourceWorktreePath := filepath.Join(sourcePath, filepath.FromSlash(sourceDir))
+	sourceWorktreePath := sourcePath
+	if sourceDir != "" {
+		sourceWorktreePath = filesystem.JoinPaths(sourcePath, sourceDir)
+	}
 	if err := copyRepositoryFiles(sourceWorktreePath, targetPath, protectedPaths); err != nil {
 		return err
 	}
 
-	if err := os.RemoveAll(filepath.Join(targetPath, ".git")); err != nil {
+	if err := os.RemoveAll(filesystem.JoinPaths(targetPath, ".git")); err != nil {
 		return err
 	}
 
-	return copyPath(filepath.Join(sourcePath, ".git"), filepath.Join(targetPath, ".git"))
+	return copyPath(filesystem.JoinPaths(sourcePath, ".git"), filesystem.JoinPaths(targetPath, ".git"))
 }
 
 func copyRepositoryFiles(sourcePath string, targetPath string, protectedPaths map[string]struct{}) error {
@@ -553,7 +557,7 @@ func copyRepositoryFiles(sourcePath string, targetPath string, protectedPaths ma
 			return nil
 		}
 
-		target := filepath.Join(targetPath, filepath.FromSlash(relPath))
+		target := filesystem.JoinPaths(targetPath, relPath)
 		if entry.IsDir() {
 			if protectedPath(protectedPaths, relPath) {
 				return filepath.SkipDir
@@ -616,7 +620,7 @@ func stripRepositorySourceDir(filePath string, sourceDir string) (string, error)
 
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
-		return "", fmt.Errorf("compose file path cannot be empty")
+		return "", errors.New("compose file path cannot be empty")
 	}
 
 	filePath = strings.TrimLeft(filePath, "/")
@@ -658,7 +662,7 @@ func copyPath(source string, target string) error {
 		}
 
 		for _, entry := range entries {
-			if err := copyPath(filepath.Join(source, entry.Name()), filepath.Join(target, entry.Name())); err != nil {
+			if err := copyPath(filesystem.JoinPaths(source, entry.Name()), filesystem.JoinPaths(target, entry.Name())); err != nil {
 				return err
 			}
 		}
@@ -697,16 +701,20 @@ func copyPath(source string, target string) error {
 	if err != nil {
 		return err
 	}
-	defer sourceFile.Close()
+	defer func() { _ = sourceFile.Close() }()
 
 	targetFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
 	if err != nil {
 		return err
 	}
-	defer targetFile.Close()
 
-	_, err = io.Copy(targetFile, sourceFile)
-	return err
+	_, copyErr := io.Copy(targetFile, sourceFile)
+	closeErr := targetFile.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+
+	return closeErr
 }
 
 func relativeRepositoryPath(root string, path string) (string, error) {

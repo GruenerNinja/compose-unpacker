@@ -115,7 +115,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 	deployer := swarm.NewSwarmDeployer()
 
 	composeFilePaths := make([]string, len(composeRelativeFilePaths))
-	for i := range len(composeRelativeFilePaths) {
+	for i := range composeRelativeFilePaths {
 		composeFilePaths[i] = filesystem.JoinPaths(clonePath, composeRelativeFilePaths[i])
 	}
 

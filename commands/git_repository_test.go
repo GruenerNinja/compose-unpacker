@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/portainer/compose-unpacker/exec"
+	"github.com/portainer/portainer/api/filesystem"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -19,9 +20,9 @@ func TestPrepareGitRepositoryKeepPreservesLocalChanges(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	repoPath := filepath.Join(tmpDir, "repo")
-	mountPath := filepath.Join(tmpDir, "dest", "stacks", "test-stack")
-	clonePath := filepath.Join(mountPath, "repo")
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	mountPath := filesystem.JoinPaths(tmpDir, "dest", "stacks", "test-stack")
+	clonePath := filesystem.JoinPaths(mountPath, "repo")
 
 	repo := initTestRepository(t, repoPath)
 	writeTestFile(t, repoPath, "docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
@@ -62,15 +63,15 @@ func TestPrepareGitRepositoryKeepPreservesLocalChanges(t *testing.T) {
 	require.Equal(t, "repo-clean-update\n", readTestFile(t, clonePath, "clean.txt"))
 	require.Equal(t, "local-only\n", readTestFile(t, clonePath, "future.txt"))
 	require.Equal(t, "repo-new-file\n", readTestFile(t, clonePath, "new.txt"))
-	require.NoFileExists(t, filepath.Join(clonePath, "removed.txt"))
+	require.NoFileExists(t, filesystem.JoinPaths(clonePath, "removed.txt"))
 }
 
 func TestPrepareGitRepositoryFlatModeClonesAndSyncsDestination(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	repoPath := filepath.Join(tmpDir, "repo")
-	destination := filepath.Join(tmpDir, "target")
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	destination := filesystem.JoinPaths(tmpDir, "target")
 
 	repo := initTestRepository(t, repoPath)
 	writeTestFile(t, repoPath, "docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
@@ -96,15 +97,15 @@ func TestPrepareGitRepositoryFlatModeClonesAndSyncsDestination(t *testing.T) {
 	require.Equal(t, "services:\n  app:\n    image: alpine:3.20\n", readTestFile(t, destination, "docker-compose.yml"))
 	require.Equal(t, "VALUE=repo\n", readTestFile(t, destination, ".env"))
 	require.Equal(t, "http:\n  routers: {}\n", readTestFile(t, destination, "traefik/dynamic/npm-fallback.yaml"))
-	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+	require.NoDirExists(t, filesystem.JoinPaths(destination, "stacks"))
 }
 
 func TestPrepareGitRepositoryFlatSourceDirClonesOnlySourceDirectory(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	repoPath := filepath.Join(tmpDir, "repo")
-	destination := filepath.Join(tmpDir, "target")
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	destination := filesystem.JoinPaths(tmpDir, "target")
 
 	repo := initTestRepository(t, repoPath)
 	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
@@ -130,17 +131,17 @@ func TestPrepareGitRepositoryFlatSourceDirClonesOnlySourceDirectory(t *testing.T
 	require.Equal(t, "services:\n  app:\n    image: alpine:3.20\n", readTestFile(t, destination, "docker-compose.yml"))
 	require.Equal(t, "VALUE=repo\n", readTestFile(t, destination, ".env"))
 	require.Equal(t, "http:\n  routers: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
-	require.NoDirExists(t, filepath.Join(destination, "tmc-proxy"))
-	require.NoDirExists(t, filepath.Join(destination, "other"))
-	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+	require.NoDirExists(t, filesystem.JoinPaths(destination, "tmc-proxy"))
+	require.NoDirExists(t, filesystem.JoinPaths(destination, "other"))
+	require.NoDirExists(t, filesystem.JoinPaths(destination, "stacks"))
 }
 
 func TestPrepareGitRepositoryFlatKeepPreservesLocalChanges(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	repoPath := filepath.Join(tmpDir, "repo")
-	destination := filepath.Join(tmpDir, "target")
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	destination := filesystem.JoinPaths(tmpDir, "target")
 
 	repo := initTestRepository(t, repoPath)
 	writeTestFile(t, repoPath, "docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
@@ -188,16 +189,16 @@ func TestPrepareGitRepositoryFlatKeepPreservesLocalChanges(t *testing.T) {
 	require.Equal(t, "http:\n  routers:\n    local: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
 	require.Equal(t, "new-clean\n", readTestFile(t, destination, "clean.txt"))
 	require.Equal(t, "new-file\n", readTestFile(t, destination, "new.txt"))
-	require.NoFileExists(t, filepath.Join(destination, "removed.txt"))
-	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+	require.NoFileExists(t, filesystem.JoinPaths(destination, "removed.txt"))
+	require.NoDirExists(t, filesystem.JoinPaths(destination, "stacks"))
 }
 
 func TestPrepareGitRepositoryFlatSourceDirKeepPreservesLocalChanges(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	repoPath := filepath.Join(tmpDir, "repo")
-	destination := filepath.Join(tmpDir, "target")
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	destination := filesystem.JoinPaths(tmpDir, "target")
 
 	repo := initTestRepository(t, repoPath)
 	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
@@ -250,18 +251,18 @@ func TestPrepareGitRepositoryFlatSourceDirKeepPreservesLocalChanges(t *testing.T
 	require.Equal(t, "http:\n  routers:\n    local: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
 	require.Equal(t, "new-clean\n", readTestFile(t, destination, "clean.txt"))
 	require.Equal(t, "new-file\n", readTestFile(t, destination, "new.txt"))
-	require.NoFileExists(t, filepath.Join(destination, "removed.txt"))
-	require.NoFileExists(t, filepath.Join(destination, "outside.txt"))
-	require.NoDirExists(t, filepath.Join(destination, "tmc-proxy"))
-	require.NoDirExists(t, filepath.Join(destination, "stacks"))
+	require.NoFileExists(t, filesystem.JoinPaths(destination, "removed.txt"))
+	require.NoFileExists(t, filesystem.JoinPaths(destination, "outside.txt"))
+	require.NoDirExists(t, filesystem.JoinPaths(destination, "tmc-proxy"))
+	require.NoDirExists(t, filesystem.JoinPaths(destination, "stacks"))
 }
 
 func TestPrepareGitRepositoryFlatSourceDirManagedFilesRestoresMissingDeploymentFiles(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	repoPath := filepath.Join(tmpDir, "repo")
-	destination := filepath.Join(tmpDir, "target")
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	destination := filesystem.JoinPaths(tmpDir, "target")
 
 	repo := initTestRepository(t, repoPath)
 	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
@@ -286,9 +287,9 @@ func TestPrepareGitRepositoryFlatSourceDirManagedFilesRestoresMissingDeploymentF
 
 	managedFiles := deploymentFiles([]string{"docker-compose.yml"})
 	require.NoError(t, finalizeDeploymentFiles(destination, "", managedFiles, true))
-	require.NoFileExists(t, filepath.Join(destination, "docker-compose.yml"))
-	require.NoFileExists(t, filepath.Join(destination, ".env"))
-	require.NoFileExists(t, filepath.Join(destination, "portainer.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(destination, "docker-compose.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(destination, ".env"))
+	require.NoFileExists(t, filesystem.JoinPaths(destination, "portainer.yml"))
 
 	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  app:\n    image: alpine:3.21\n")
 	writeTestFile(t, repoPath, "tmc-proxy/.env", "VALUE=repo-updated\n")
@@ -316,7 +317,7 @@ func TestValidateFlatDestination(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	allowedDestination := filepath.Join(tmpDir, "parent", "stack")
+	allowedDestination := filesystem.JoinPaths(tmpDir, "parent", "stack")
 
 	require.NoError(t, validateFlatDestination(allowedDestination))
 	require.DirExists(t, allowedDestination)
@@ -325,12 +326,12 @@ func TestValidateFlatDestination(t *testing.T) {
 	for _, destination := range []string{
 		"",
 		string(filepath.Separator),
-		filepath.Join(string(filepath.Separator), "etc"),
-		filepath.Join(string(filepath.Separator), "etc", "portainer"),
-		filepath.Join(string(filepath.Separator), "usr"),
-		filepath.Join(string(filepath.Separator), "bin"),
-		filepath.Join(string(filepath.Separator), "var", "run"),
-		filepath.Join(string(filepath.Separator), "root"),
+		filesystem.JoinPaths(string(filepath.Separator), "etc"),
+		filesystem.JoinPaths(string(filepath.Separator), "etc", "portainer"),
+		filesystem.JoinPaths(string(filepath.Separator), "usr"),
+		filesystem.JoinPaths(string(filepath.Separator), "bin"),
+		filesystem.JoinPaths(string(filepath.Separator), "var", "run"),
+		filesystem.JoinPaths(string(filepath.Separator), "root"),
 	} {
 		err := validateFlatDestination(destination)
 		require.Error(t, err)
@@ -400,7 +401,7 @@ func removeTestRepositoryFile(t *testing.T, repo *git.Repository, name string) {
 func writeTestFile(t *testing.T, root string, name string, content string) {
 	t.Helper()
 
-	path := filepath.Join(root, filepath.FromSlash(name))
+	path := filesystem.JoinPaths(root, name)
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755))
 	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
 }
@@ -408,7 +409,7 @@ func writeTestFile(t *testing.T, root string, name string, content string) {
 func readTestFile(t *testing.T, root string, name string) string {
 	t.Helper()
 
-	content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+	content, err := os.ReadFile(filesystem.JoinPaths(root, name))
 	require.NoError(t, err)
 	return string(content)
 }
