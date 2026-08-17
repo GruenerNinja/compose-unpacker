@@ -5,6 +5,9 @@ PLATFORM=$(shell go env GOOS)
 ARCH=$(shell go env GOARCH)
 GOTESTSUM=go run gotest.tools/gotestsum@latest
 GOLANGCI_LINT_VERSION := $(shell cat $(shell git rev-parse --show-toplevel)/.golangci-version)
+# fsevents requires CGO on macOS. Release binaries for Linux and Windows remain
+# static because this expression evaluates to 0 for those platforms.
+CGO_ENABLED ?= $(if $(filter darwin,$(PLATFORM)),1,0)
 
 ifeq ("$(PLATFORM)", "windows")
 bin=compose-unpacker.exe
@@ -18,11 +21,13 @@ image := portainer/compose-unpacker:latest
 
 binary:
 	@echo "Building compose-unpacker for $(PLATFORM)/$(ARCH)..."
-	GOOS="$(PLATFORM)" GOARCH="$(ARCH)" CGO_ENABLED=0 go build -a --installsuffix cgo --ldflags '-s' -o dist/$(bin)
+	GOOS="$(PLATFORM)" GOARCH="$(ARCH)" CGO_ENABLED="$(CGO_ENABLED)" go build -a --installsuffix cgo --ldflags '-s' -o dist/$(bin)
 
 build: binary
 	@echo "done."
 
+# Container images always contain a Linux binary, even when make runs on macOS.
+image: PLATFORM=linux
 image: build
 	docker build -f build/$(PLATFORM)/Dockerfile -t $(image) .
 
