@@ -11,6 +11,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/portainer/portainer v0.6.1-0.20250108192604-24fdb1f60020
 	github.com/rs/zerolog v1.34.0
+	github.com/stretchr/testify v1.11.1
 )
 
 require (
@@ -178,7 +179,6 @@ require (
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/theupdateframework/notary v0.7.0 // indirect
 	github.com/tilt-dev/fsnotify v1.4.8-0.20220602155310-fff9c274a375 // indirect
 	github.com/tonistiigi/dchapes-mode v0.0.0-20250318174251-73d941a28323 // indirect
