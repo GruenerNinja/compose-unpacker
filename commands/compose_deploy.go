@@ -128,7 +128,7 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 	deployer := compose.NewComposeDeployer()
 
 	composeFilePaths := make([]string, len(composeRelativeFilePaths))
-	for i := range len(composeRelativeFilePaths) {
+	for i := range composeRelativeFilePaths {
 		composeFilePaths[i] = filesystem.JoinPaths(clonePath, composeRelativeFilePaths[i])
 	}
 

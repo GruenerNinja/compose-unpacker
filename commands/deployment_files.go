@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/portainer/portainer/api/filesystem"
 
 	"github.com/rs/zerolog/log"
 )
@@ -32,7 +35,7 @@ func cleanDeploymentDir(dir string) (string, error) {
 
 	cleaned := path.Clean(dir)
 	if cleaned == "." {
-		return "", fmt.Errorf("deployment directory must not be .")
+		return "", errors.New("deployment directory cannot be current directory")
 	}
 
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
@@ -104,14 +107,14 @@ func restoreDeploymentFiles(root string, deploymentDir string, files []string) e
 	}
 
 	for _, file := range files {
-		rootPath := filepath.Join(root, filepath.FromSlash(file))
+		rootPath := filesystem.JoinPaths(root, file)
 		if _, err := os.Lstat(rootPath); err == nil {
 			continue
 		} else if !os.IsNotExist(err) {
 			return err
 		}
 
-		archivePath := filepath.Join(root, filepath.FromSlash(deploymentDir), filepath.FromSlash(file))
+		archivePath := filesystem.JoinPaths(root, deploymentDir, file)
 		info, err := os.Lstat(archivePath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -171,7 +174,7 @@ func finalizeDeploymentFilesAfterDeploy(root string, deploymentDir string, files
 // the checked-out repository.
 func cleanupDeploymentFiles(root string, files []string) error {
 	for _, file := range files {
-		rootPath := filepath.Join(root, filepath.FromSlash(file))
+		rootPath := filesystem.JoinPaths(root, file)
 		info, err := os.Lstat(rootPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -208,7 +211,7 @@ func archiveDeploymentFiles(root string, deploymentDir string, files []string) e
 	}
 
 	for _, file := range files {
-		rootPath := filepath.Join(root, filepath.FromSlash(file))
+		rootPath := filesystem.JoinPaths(root, file)
 		info, err := os.Lstat(rootPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -225,7 +228,7 @@ func archiveDeploymentFiles(root string, deploymentDir string, files []string) e
 			continue
 		}
 
-		archivePath := filepath.Join(root, filepath.FromSlash(deploymentDir), filepath.FromSlash(file))
+		archivePath := filesystem.JoinPaths(root, deploymentDir, file)
 		archiveInfo, err := os.Lstat(archivePath)
 		if err == nil {
 			if archiveInfo.IsDir() {
@@ -279,13 +282,13 @@ func sameFileContent(leftPath string, rightPath string) (bool, error) {
 		return false, err
 	}
 	// defer is similar to Java try-with-resources: Close runs on every return path.
-	defer left.Close()
+	defer func() { _ = left.Close() }()
 
 	right, err := os.Open(rightPath)
 	if err != nil {
 		return false, err
 	}
-	defer right.Close()
+	defer func() { _ = right.Close() }()
 
 	equal, err := readersEqual(left, right)
 	return equal, err

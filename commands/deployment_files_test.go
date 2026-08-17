@@ -2,8 +2,9 @@ package commands
 
 import (
 	"errors"
-	"path/filepath"
 	"testing"
+
+	"github.com/portainer/portainer/api/filesystem"
 
 	"github.com/stretchr/testify/require"
 )
@@ -56,11 +57,11 @@ func TestFinalizeDeploymentFilesArchivesAfterSuccessfulDeploy(t *testing.T) {
 
 	require.NoError(t, finalizeDeploymentFiles(root, ".deployed", files, false))
 
-	require.NoFileExists(t, filepath.Join(root, "docker-compose.yml"))
-	require.NoFileExists(t, filepath.Join(root, "compose.override.yml"))
-	require.NoFileExists(t, filepath.Join(root, ".env"))
-	require.NoFileExists(t, filepath.Join(root, "portainer.yml"))
-	require.NoFileExists(t, filepath.Join(root, "portainer.yaml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "docker-compose.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "compose.override.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, ".env"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "portainer.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "portainer.yaml"))
 	require.Equal(t, "services:\n  app:\n    image: alpine\n", readTestFile(t, root, ".deployed/docker-compose.yml"))
 	require.Equal(t, "services:\n  app:\n    environment: []\n", readTestFile(t, root, ".deployed/compose.override.yml"))
 	require.Equal(t, "VALUE=repo\n", readTestFile(t, root, ".deployed/.env"))
@@ -78,11 +79,11 @@ func TestFinalizeDeploymentFilesCleanupDeletesAfterSuccessfulDeploy(t *testing.T
 
 	require.NoError(t, finalizeDeploymentFiles(root, ".deployed", files, true))
 
-	require.NoFileExists(t, filepath.Join(root, "docker-compose.yml"))
-	require.NoFileExists(t, filepath.Join(root, ".env"))
-	require.NoFileExists(t, filepath.Join(root, "portainer.yml"))
-	require.NoFileExists(t, filepath.Join(root, "portainer.yaml"))
-	require.NoDirExists(t, filepath.Join(root, ".deployed"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "docker-compose.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, ".env"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "portainer.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "portainer.yaml"))
+	require.NoDirExists(t, filesystem.JoinPaths(root, ".deployed"))
 	require.Equal(t, "http:\n  routers: {}\n", readTestFile(t, root, "traefik/dynamic/test.yaml"))
 }
 
@@ -101,7 +102,7 @@ func TestFinalizeDeploymentFilesFailedDeployLeavesRootFiles(t *testing.T) {
 	require.Equal(t, "VALUE=repo\n", readTestFile(t, root, ".env"))
 	require.Equal(t, "version: 1\n", readTestFile(t, root, "portainer.yml"))
 	require.Equal(t, "version: 1\n", readTestFile(t, root, "portainer.yaml"))
-	require.NoDirExists(t, filepath.Join(root, ".deployed"))
+	require.NoDirExists(t, filesystem.JoinPaths(root, ".deployed"))
 }
 
 func TestRestoreDeploymentFilesOnlyRestoresMissingRootFiles(t *testing.T) {
@@ -117,7 +118,7 @@ func TestRestoreDeploymentFilesOnlyRestoresMissingRootFiles(t *testing.T) {
 
 	require.Equal(t, "services:\n  app:\n    image: alpine\n", readTestFile(t, root, "docker-compose.yml"))
 	require.Equal(t, "VALUE=local\n", readTestFile(t, root, ".env"))
-	require.NoFileExists(t, filepath.Join(root, ".deployed/docker-compose.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, ".deployed/docker-compose.yml"))
 	require.Equal(t, "VALUE=archived\n", readTestFile(t, root, ".deployed/.env"))
 }
 
@@ -145,7 +146,7 @@ func TestArchiveDeploymentFilesRemovesRootWhenArchiveTargetIsIdentical(t *testin
 
 	require.NoError(t, finalizeDeploymentFiles(root, ".deployed", files, false))
 
-	require.NoFileExists(t, filepath.Join(root, "docker-compose.yml"))
+	require.NoFileExists(t, filesystem.JoinPaths(root, "docker-compose.yml"))
 	require.Equal(t, "same\n", readTestFile(t, root, ".deployed/docker-compose.yml"))
 }
 
