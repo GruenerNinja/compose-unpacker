@@ -11,6 +11,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// SwarmDeployCommand contains the CLI input for deploying a Docker Swarm stack.
+// It mirrors DeployCommand but adds Swarm-specific options such as Pull.
 type SwarmDeployCommand struct {
 	User                     string   `help:"Username for Git authentication." short:"u"`
 	Password                 string   `help:"Password or PAT for Git authentication" short:"p"`
@@ -32,6 +34,7 @@ type SwarmDeployCommand struct {
 	ComposeRelativeFilePaths []string `arg:"" help:"Relative path to the Compose file."  name:"compose-file-paths"`
 }
 
+// Run prepares a repository and deploys its files as a Docker Swarm stack.
 func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 	log.Info().
 		Str("repository", cmd.GitRepository).
@@ -45,6 +48,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 			Msg("Using Git authentication")
 	}
 
+	// The final URL segment becomes the repository directory name.
 	i := strings.LastIndex(cmd.GitRepository, "/")
 	if i == -1 {
 		log.Error().
@@ -73,6 +77,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 	}
 
 	mountPath, clonePath := gitRepositoryDeploymentPaths(cmd.Destination, cmd.ProjectName, repositoryName, cmd.Flat)
+	// Source-dir content moves to the destination root, so adjust file paths too.
 	composeRelativeFilePaths := make([]string, len(cmd.ComposeRelativeFilePaths))
 	for i := range len(cmd.ComposeRelativeFilePaths) {
 		composeRelativeFilePath, err := stripRepositorySourceDir(cmd.ComposeRelativeFilePaths[i], cmd.SourceDir)
@@ -84,6 +89,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		composeRelativeFilePaths[i] = composeRelativeFilePath
 	}
 
+	// Deployment-file archiving is intentionally limited to flat source-dir mode.
 	manageDeploymentFiles := cmd.Flat && strings.TrimSpace(cmd.SourceDir) != "" && (deploymentDir != "" || cmd.CleanupDeploymentFiles)
 	deploymentFilePaths := deploymentFiles(composeRelativeFilePaths)
 	var unprotectMissingPaths map[string]struct{}
@@ -97,6 +103,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		}
 	}
 
+	// Prepare the requested Git content before contacting Docker Swarm.
 	if err := prepareGitRepository(cmdCtx, gitRepositoryOptions{
 		repository:            cmd.GitRepository,
 		reference:             cmd.Reference,
@@ -112,6 +119,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		return err
 	}
 
+	// The Portainer library performs the actual Docker Swarm operation.
 	deployer := swarm.NewSwarmDeployer()
 
 	composeFilePaths := make([]string, len(composeRelativeFilePaths))
@@ -144,6 +152,7 @@ func (cmd *SwarmDeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		return fmt.Errorf("%w: %w", exec.ErrDeployComposeFailure, err)
 	}
 
+	// Only archive or delete deployment files after Docker reports success.
 	if manageDeploymentFiles {
 		if err := finalizeDeploymentFilesAfterDeploy(clonePath, deploymentDir, deploymentFilePaths, cmd.CleanupDeploymentFiles, nil); err != nil {
 			log.Error().Err(err).Msg("Failed to finalize deployment files")

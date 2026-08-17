@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// UndeployCommand contains the CLI input for removing a Compose stack.
 type UndeployCommand struct {
 	User          string `help:"Username for Git authentication." short:"u"`
 	Password      string `help:"Password or PAT for Git authentication" short:"p"`
@@ -23,6 +24,7 @@ type UndeployCommand struct {
 	ComposeRelativeFilePaths []string `arg:"" help:"Relative path to the Compose file." name:"compose-file-path"`
 }
 
+// Run removes a Compose stack and optionally removes its local working files.
 func (cmd *UndeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 	log.Info().
 		Str("repository", cmd.GitRepository).
@@ -46,6 +48,7 @@ func (cmd *UndeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 
 	mountPath := gitRepositoryMountPath(cmd.Destination, cmd.ProjectName, cmd.Flat)
 
+	// Removal talks to Docker by project name; it does not need to clone Git again.
 	deployer := compose.NewComposeDeployer()
 
 	log.Debug().
@@ -62,7 +65,8 @@ func (cmd *UndeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 
 	log.Info().Msg("Compose stack remove complete")
 
-	if !cmd.Keep { //stack stop request
+	// Keep controls local files only. The Docker stack has already been removed.
+	if !cmd.Keep {
 		if err := os.RemoveAll(mountPath); err != nil {
 			log.Error().
 				Err(err).

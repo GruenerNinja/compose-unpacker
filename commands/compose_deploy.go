@@ -12,6 +12,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// DeployCommand contains every flag and positional argument accepted by the
+// `deploy` subcommand. Kong reads the struct tags to build the CLI automatically.
 type DeployCommand struct {
 	User                     string   `help:"Username for Git authentication." short:"u"`
 	Password                 string   `help:"Password or PAT for Git authentication" short:"p"`
@@ -32,7 +34,9 @@ type DeployCommand struct {
 	ComposeRelativeFilePaths []string `arg:"" help:"Relative path to the Compose file."  name:"compose-file-paths"`
 }
 
+// Run prepares a repository and deploys its files as a Compose stack.
 func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
+	// cmd is the method receiver, which is similar to `this` in Java.
 	log.Info().
 		Str("repository", cmd.GitRepository).
 		Strs("composePath", cmd.ComposeRelativeFilePaths).
@@ -47,6 +51,7 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 			Msg("Using Git authentication")
 	}
 
+	// Use the URL's final segment as the directory name for a normal clone.
 	i := strings.LastIndex(cmd.GitRepository, "/")
 	if i == -1 {
 		log.Error().
@@ -60,6 +65,8 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		Str("directory", cmd.Destination).
 		Msg("Checking the file system...")
 
+	// Flat mode writes directly into a user-selected path, so it needs stronger
+	// safety checks than the normal nested working directory.
 	if cmd.Flat {
 		if err := validateFlatDestination(cmd.Destination); err != nil {
 			log.Error().Err(err).Msg("Invalid flat destination")
@@ -74,6 +81,8 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 	}
 
 	mountPath, clonePath := gitRepositoryDeploymentPaths(cmd.Destination, cmd.ProjectName, repositoryName, cmd.Flat)
+	// Source-dir content is copied to the destination root, so Compose paths must
+	// be rewritten to point at their final location.
 	composeRelativeFilePaths := make([]string, len(cmd.ComposeRelativeFilePaths))
 	for i := range len(cmd.ComposeRelativeFilePaths) {
 		composeRelativeFilePath, err := stripRepositorySourceDir(cmd.ComposeRelativeFilePaths[i], cmd.SourceDir)
@@ -85,6 +94,7 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		composeRelativeFilePaths[i] = composeRelativeFilePath
 	}
 
+	// Deployment-file archiving is intentionally limited to flat source-dir mode.
 	manageDeploymentFiles := cmd.Flat && strings.TrimSpace(cmd.SourceDir) != "" && (deploymentDir != "" || cmd.CleanupDeploymentFiles)
 	deploymentFilePaths := deploymentFiles(composeRelativeFilePaths)
 	var unprotectMissingPaths map[string]struct{}
@@ -98,6 +108,7 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		}
 	}
 
+	// Prepare the files first; no Docker deployment starts if Git preparation fails.
 	if err := prepareGitRepository(cmdCtx, gitRepositoryOptions{
 		repository:            cmd.GitRepository,
 		reference:             cmd.Reference,
@@ -113,6 +124,7 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		return err
 	}
 
+	// The Portainer library performs the actual Docker Compose operation.
 	deployer := compose.NewComposeDeployer()
 
 	composeFilePaths := make([]string, len(composeRelativeFilePaths))
@@ -144,6 +156,7 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		return fmt.Errorf("%w: %w", exec.ErrDeployComposeFailure, err)
 	}
 
+	// Only archive or delete deployment files after Docker reports success.
 	if manageDeploymentFiles {
 		if err := finalizeDeploymentFilesAfterDeploy(clonePath, deploymentDir, deploymentFilePaths, cmd.CleanupDeploymentFiles, nil); err != nil {
 			log.Error().Err(err).Msg("Failed to finalize deployment files")

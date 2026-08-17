@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog/pkgerrors"
 )
 
+// Level is the logging severity accepted by the command-line interface.
 type Level string
 
 const (
@@ -24,6 +25,7 @@ const (
 )
 
 var (
+	// mapLevel translates this project's CLI values into zerolog's values.
 	mapLevel = map[Level]zerolog.Level{
 		LevelError: zerolog.ErrorLevel,
 		LevelWarn:  zerolog.WarnLevel,
@@ -32,7 +34,8 @@ var (
 	}
 )
 
-// ConfigureLogger configures the logger
+// ConfigureLogger configures the process-wide logger. pretty selects readable
+// console output; the default is structured JSON output.
 func ConfigureLogger(pretty bool) {
 	zerolog.ErrorStackFieldName = "stack_trace"
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
@@ -48,7 +51,7 @@ func ConfigureLogger(pretty bool) {
 	}
 }
 
-// SetLoggingLevel sets the logging level
+// SetLoggingLevel hides messages below the requested severity for the process.
 func SetLoggingLevel(level Level) {
 	zerolog.SetGlobalLevel(mapLevel[level])
 }

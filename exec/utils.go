@@ -9,11 +9,16 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// MakeWorkingDir builds the directory that belongs to one stack.
 func MakeWorkingDir(target, stackName string) string {
+	// The filesystem helper joins paths correctly on both Linux and Windows.
 	return filesystem.JoinPaths(target, "stacks", stackName)
 }
 
+// ParseRegistryCredentials converts CLI strings into Docker authentication
+// objects. Accepted forms are user:password:server and user:password:host:port.
 func ParseRegistryCredentials(raw []string) []types.AuthConfig {
+	// A slice is Go's flexible array type, similar to an ArrayList in Java.
 	var registries []types.AuthConfig
 	for _, r := range raw {
 		credentials := strings.Split(r, ":")
@@ -30,6 +35,7 @@ func ParseRegistryCredentials(raw []string) []types.AuthConfig {
 			serverAddr += ":" + credentials[3]
 		}
 
+		// append returns the updated slice because its backing array may grow.
 		registries = append(registries, types.AuthConfig{
 			Username:      credentials[0],
 			Password:      credentials[1],

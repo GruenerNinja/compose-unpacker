@@ -24,6 +24,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// gitRepositoryOptions groups the values needed by Git helper functions. Unlike
+// command structs, its fields are private and are not read directly by Kong.
 type gitRepositoryOptions struct {
 	repository            string
 	reference             string
@@ -37,6 +39,8 @@ type gitRepositoryOptions struct {
 	unprotectMissingPaths map[string]struct{}
 }
 
+// disallowedFlatDestinations protects important system trees from flat mode,
+// which may delete and replace files in its destination.
 var disallowedFlatDestinations = []string{
 	string(filepath.Separator),
 	string(filepath.Separator) + "bin",
@@ -51,9 +55,13 @@ var disallowedFlatDestinations = []string{
 	filepath.Join(string(filepath.Separator), "var", "run"),
 }
 
+// gitRepositoryDeploymentPaths returns both the removable stack directory and the
+// exact directory that contains the checked-out repository files.
 func gitRepositoryDeploymentPaths(destination string, projectName string, repositoryName string, flat bool) (string, string) {
+	// Normal mode has a stack directory containing one cloned repository.
 	mountPath := exec.MakeWorkingDir(destination, projectName)
 	clonePath := filesystem.JoinPaths(mountPath, repositoryName)
+	// Flat mode uses the destination itself for both concepts.
 	if flat {
 		mountPath = destination
 		clonePath = destination
@@ -62,6 +70,8 @@ func gitRepositoryDeploymentPaths(destination string, projectName string, reposi
 	return mountPath, clonePath
 }
 
+// gitRepositoryMountPath returns the directory that may be removed after an
+// undeploy. It is wider than clonePath in normal mode.
 func gitRepositoryMountPath(destination string, projectName string, flat bool) string {
 	if flat {
 		return destination
@@ -70,6 +80,8 @@ func gitRepositoryMountPath(destination string, projectName string, flat bool) s
 	return exec.MakeWorkingDir(destination, projectName)
 }
 
+// validateFlatDestination checks that a flat destination is absolute, writable,
+// and outside protected system locations. It also checks resolved symlinks.
 func validateFlatDestination(destination string) error {
 	trimmedDestination := strings.TrimSpace(destination)
 	if trimmedDestination == "" {
@@ -94,6 +106,8 @@ func validateFlatDestination(destination string) error {
 		return fmt.Errorf("flat destination %q cannot be created: %w", cleanDestination, err)
 	}
 
+	// Check the real target too, so a harmless-looking symlink cannot point into
+	// a protected system directory.
 	resolvedDestination, err := filepath.EvalSymlinks(cleanDestination)
 	if err != nil {
 		return fmt.Errorf("flat destination %q cannot be resolved: %w", cleanDestination, err)
@@ -103,6 +117,7 @@ func validateFlatDestination(destination string) error {
 		return err
 	}
 
+	// Creating and deleting a small temporary file proves the directory is writable.
 	probe, err := os.CreateTemp(cleanDestination, ".portainer-write-test-*")
 	if err != nil {
 		return fmt.Errorf("flat destination %q is not writable: %w", cleanDestination, err)
@@ -121,6 +136,8 @@ func validateFlatDestination(destination string) error {
 	return nil
 }
 
+// rejectDisallowedFlatDestination rejects both a protected root and anything
+// nested below it.
 func rejectDisallowedFlatDestination(destination string) error {
 	for _, disallowed := range disallowedFlatDestinations {
 		if pathWithin(destination, disallowed) {
@@ -131,6 +148,7 @@ func rejectDisallowedFlatDestination(destination string) error {
 	return nil
 }
 
+// pathWithin reports whether candidate is root itself or a descendant of root.
 func pathWithin(candidate string, root string) bool {
 	cleanRoot := filepath.Clean(root)
 	if candidate == cleanRoot {
@@ -148,6 +166,8 @@ func pathWithin(candidate string, root string) bool {
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// prepareGitRepository selects the correct Git strategy. A plain deployment
+// replaces the checkout; --keep and --source-dir synchronize through a fresh clone.
 func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepositoryOptions) error {
 	sourceDir, err := cleanRepositorySourceDir(opts.sourceDir)
 	if err != nil {
@@ -164,17 +184,21 @@ func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitReposito
 		return cloneGitRepository(cmdCtx, opts)
 	}
 
+	// Determine which local changes a fresh repository must not overwrite.
 	protectedPaths, err := protectedRepositoryPaths(opts.clonePath, opts.sourceDir, opts.unprotectMissingPaths)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to inspect existing Git repository")
 		return exec.ErrDeployComposeFailure
 	}
 
+	// Clone separately instead of pulling into a possibly dirty working tree.
 	tempMountPath, err := os.MkdirTemp("", "portainer-repo-*")
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create temporary Git repository directory")
 		return exec.ErrDeployComposeFailure
 	}
+	// The deferred function runs when prepareGitRepository returns, including on
+	// error. This is Go's common replacement for a Java finally block.
 	defer func() {
 		if err := os.RemoveAll(tempMountPath); err != nil {
 			log.Warn().Err(err).Msg("Failed to remove temporary Git repository directory")
@@ -198,6 +222,8 @@ func prepareGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitReposito
 	return nil
 }
 
+// prepareGitRepositorySourceDir clones a whole repository temporarily, then copies
+// only sourceDir's contents to the destination root.
 func prepareGitRepositorySourceDir(cmdCtx *exec.CommandExecutionContext, opts gitRepositoryOptions) error {
 	protectedPaths := map[string]struct{}{}
 	if opts.keep {
@@ -241,6 +267,8 @@ func prepareGitRepositorySourceDir(cmdCtx *exec.CommandExecutionContext, opts gi
 	return nil
 }
 
+// cloneGitRepository replaces the old checkout with a shallow clone of one Git
+// reference. It returns the shared deployment error so callers see one category.
 func cloneGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepositoryOptions) error {
 	if _, err := os.Stat(opts.mountPath); err == nil {
 		if err := os.RemoveAll(opts.mountPath); err != nil {
@@ -279,6 +307,7 @@ func cloneGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepository
 		Int("depth", gitOptions.Depth).
 		Msg("Cloning git repository")
 
+	// Portainer's wrapper prevents the checkout from writing through symlinks.
 	wt := portainergit.NewNoSymlinkFS(osfs.New(opts.clonePath))
 	dot := osfs.New(filesystem.JoinPaths(opts.clonePath, ".git"))
 	storer := gogitfs.NewStorage(dot, cache.NewObjectLRU(0))
@@ -291,9 +320,12 @@ func cloneGitRepository(cmdCtx *exec.CommandExecutionContext, opts gitRepository
 	return nil
 }
 
+// protectedRepositoryPaths finds local files that synchronization must preserve:
+// modified tracked files, missing tracked files, and untracked files.
 func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissingPaths map[string]struct{}) (map[string]struct{}, error) {
 	if _, err := os.Stat(filepath.Join(clonePath, ".git")); err != nil {
 		if os.IsNotExist(err) {
+			// Without Git metadata, every existing file is treated as user-owned.
 			return allExistingFiles(clonePath)
 		}
 
@@ -310,6 +342,7 @@ func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissi
 		return nil, err
 	}
 
+	// A map with empty values is Go's lightweight equivalent of HashSet<String>.
 	protected := map[string]struct{}{}
 	for path, file := range tracked {
 		dirty, missing, err := trackedFileDirty(clonePath, path, file)
@@ -328,6 +361,7 @@ func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissi
 		}
 	}
 
+	// Anything on disk that is absent from the commit is an untracked local file.
 	if err := filepath.WalkDir(clonePath, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -358,7 +392,9 @@ func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissi
 	return protected, nil
 }
 
+// allExistingFiles returns every non-directory path below root as a protected set.
 func allExistingFiles(root string) (map[string]struct{}, error) {
+	// Start with an empty, non-nil set so callers can safely add or look up keys.
 	protected := map[string]struct{}{}
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
@@ -391,6 +427,8 @@ func allExistingFiles(root string) (map[string]struct{}, error) {
 	return protected, nil
 }
 
+// trackedFiles reads the current Git commit and maps each included repository file
+// to the path where it will appear in the destination.
 func trackedFiles(repo *git.Repository, sourceDir string) (map[string]*object.File, error) {
 	head, err := repo.Head()
 	if err != nil {
@@ -408,6 +446,7 @@ func trackedFiles(repo *git.Repository, sourceDir string) (map[string]*object.Fi
 		return nil, err
 	}
 
+	// The callback is similar to passing a Java lambda to forEach.
 	if err := iter.ForEach(func(file *object.File) error {
 		targetPath, ok := targetPathForRepositoryFile(file.Name, sourceDir)
 		if ok {
@@ -422,6 +461,8 @@ func trackedFiles(repo *git.Repository, sourceDir string) (map[string]*object.Fi
 	return files, nil
 }
 
+// trackedFileDirty compares one file on disk with its committed Git blob. The
+// booleans mean dirty and missing, in that order.
 func trackedFileDirty(root string, targetPath string, file *object.File) (bool, bool, error) {
 	currentPath := filepath.Join(root, filepath.FromSlash(targetPath))
 	info, err := os.Lstat(currentPath)
@@ -457,6 +498,8 @@ func trackedFileDirty(root string, targetPath string, file *object.File) (bool, 
 	return !equal, false, nil
 }
 
+// targetPathForRepositoryFile maps a repository path to its destination path. A
+// source directory is removed from the front because its contents are flattened.
 func targetPathForRepositoryFile(repositoryPath string, sourceDir string) (string, bool) {
 	if sourceDir == "" {
 		return repositoryPath, true
@@ -471,6 +514,8 @@ func targetPathForRepositoryFile(repositoryPath string, sourceDir string) (strin
 	return targetPath, targetPath != ""
 }
 
+// readersEqual compares any two streams. io.Reader is a small Go interface that
+// both os.File and go-git's blob reader satisfy automatically.
 func readersEqual(left io.Reader, right io.Reader) (bool, error) {
 	leftBytes, err := io.ReadAll(left)
 	if err != nil {
@@ -485,6 +530,8 @@ func readersEqual(left io.Reader, right io.Reader) (bool, error) {
 	return bytes.Equal(leftBytes, rightBytes), nil
 }
 
+// syncRepositoryWorktree updates targetPath from a freshly cloned source while
+// preserving protected local paths.
 func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths map[string]struct{}, sourceDir string) error {
 	sourceRepo, err := git.PlainOpen(sourcePath)
 	if err != nil {
@@ -496,6 +543,7 @@ func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths
 		return err
 	}
 
+	// Remove files deleted in the new commit unless the user changed them locally.
 	if _, err := os.Stat(filepath.Join(targetPath, ".git")); err == nil {
 		targetRepo, err := git.PlainOpen(targetPath)
 		if err != nil {
@@ -527,6 +575,7 @@ func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths
 		return err
 	}
 
+	// The destination should describe the fresh commit, so replace its Git metadata.
 	if err := os.RemoveAll(filepath.Join(targetPath, ".git")); err != nil {
 		return err
 	}
@@ -534,6 +583,8 @@ func syncRepositoryWorktree(sourcePath string, targetPath string, protectedPaths
 	return copyPath(filepath.Join(sourcePath, ".git"), filepath.Join(targetPath, ".git"))
 }
 
+// copyRepositoryFiles recursively copies a worktree but skips protected paths and
+// the .git directory. Directories are created before their child files.
 func copyRepositoryFiles(sourcePath string, targetPath string, protectedPaths map[string]struct{}) error {
 	return filepath.WalkDir(sourcePath, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -570,11 +621,15 @@ func copyRepositoryFiles(sourcePath string, targetPath string, protectedPaths ma
 	})
 }
 
+// protectedPath performs a set lookup. The first map result is intentionally
+// ignored with _, while the second reports whether the key exists.
 func protectedPath(protectedPaths map[string]struct{}, path string) bool {
 	_, protected := protectedPaths[path]
 	return protected
 }
 
+// hasProtectedDescendant prevents replacing a parent path that contains a local
+// file deeper in its directory tree.
 func hasProtectedDescendant(protectedPaths map[string]struct{}, path string) bool {
 	prefix := path + "/"
 	for protectedPath := range protectedPaths {
@@ -586,6 +641,8 @@ func hasProtectedDescendant(protectedPaths map[string]struct{}, path string) boo
 	return false
 }
 
+// cleanRepositorySourceDir normalizes a repository-relative directory and rejects
+// absolute paths or attempts to escape with `..`.
 func cleanRepositorySourceDir(sourceDir string) (string, error) {
 	sourceDir = strings.TrimSpace(sourceDir)
 	if sourceDir == "" {
@@ -608,6 +665,8 @@ func cleanRepositorySourceDir(sourceDir string) (string, error) {
 	return cleaned, nil
 }
 
+// stripRepositorySourceDir converts a Compose path from repository coordinates to
+// destination coordinates when sourceDir is flattened.
 func stripRepositorySourceDir(filePath string, sourceDir string) (string, error) {
 	sourceDir, err := cleanRepositorySourceDir(sourceDir)
 	if err != nil {
@@ -641,12 +700,15 @@ func stripRepositorySourceDir(filePath string, sourceDir string) (string, error)
 	return cleaned, nil
 }
 
+// copyPath copies a directory, regular file, or symbolic link while preserving
+// file permissions. It replaces incompatible target file types when necessary.
 func copyPath(source string, target string) error {
 	info, err := os.Lstat(source)
 	if err != nil {
 		return err
 	}
 
+	// Directories are copied recursively, much like walking a Java Files tree.
 	if info.IsDir() {
 		if err := os.MkdirAll(target, info.Mode()); err != nil {
 			return err
@@ -670,6 +732,7 @@ func copyPath(source string, target string) error {
 		return err
 	}
 
+	// A bitwise check identifies symbolic links in Go's FileMode value.
 	if info.Mode()&os.ModeSymlink != 0 {
 		linkTarget, err := os.Readlink(source)
 		if err != nil {
@@ -699,6 +762,7 @@ func copyPath(source string, target string) error {
 	}
 	defer sourceFile.Close()
 
+	// The | operator combines create, write-only, and truncate file flags.
 	targetFile, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
 	if err != nil {
 		return err
@@ -709,6 +773,8 @@ func copyPath(source string, target string) error {
 	return err
 }
 
+// relativeRepositoryPath returns a slash-separated path suitable for Git and for
+// map keys, even when the operating system uses a different separator.
 func relativeRepositoryPath(root string, path string) (string, error) {
 	relPath, err := filepath.Rel(root, path)
 	if err != nil {
