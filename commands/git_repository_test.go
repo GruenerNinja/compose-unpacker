@@ -66,6 +66,43 @@ func TestPrepareGitRepositoryKeepPreservesLocalChanges(t *testing.T) {
 	require.NoFileExists(t, filesystem.JoinPaths(clonePath, "removed.txt"))
 }
 
+func TestPrepareGitRepositoryRedeployUpdatesComposeFile(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	mountPath := filesystem.JoinPaths(tmpDir, "dest", "stacks", "test-stack")
+	clonePath := filesystem.JoinPaths(mountPath, "repo")
+
+	repo := initTestRepository(t, repoPath)
+	writeTestFile(t, repoPath, "docker-compose.yml", "services:\n  app:\n    image: alpine:3.20\n")
+	writeTestFile(t, repoPath, ".env", "VALUE=repository\n")
+	commitTestRepository(t, repo, "initial")
+
+	ctx := exec.NewCommandExecutionContext(context.Background())
+	opts := gitRepositoryOptions{
+		repository: repoPath,
+		reference:  plumbing.NewBranchReferenceName("master").String(),
+		mountPath:  mountPath,
+		clonePath:  clonePath,
+	}
+	require.NoError(t, prepareGitRepository(ctx, opts))
+
+	// Simulate a user-managed environment file and a newer Compose definition in Git.
+	writeTestFile(t, clonePath, ".env", "VALUE=local\n")
+	writeTestFile(t, repoPath, "docker-compose.yml", "services:\n  app:\n    image: alpine:3.21\n")
+	writeTestFile(t, repoPath, ".env", "VALUE=repository-updated\n")
+	commitTestRepository(t, repo, "update compose")
+
+	// Redeploy uses keep=true: clean repository files must still update, while local
+	// modifications remain protected.
+	opts.keep = true
+	require.NoError(t, prepareGitRepository(ctx, opts))
+
+	require.Equal(t, "services:\n  app:\n    image: alpine:3.21\n", readTestFile(t, clonePath, "docker-compose.yml"))
+	require.Equal(t, "VALUE=local\n", readTestFile(t, clonePath, ".env"))
+}
+
 func TestPrepareGitRepositoryFlatModeClonesAndSyncsDestination(t *testing.T) {
 	t.Parallel()
 
