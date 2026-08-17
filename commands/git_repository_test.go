@@ -350,6 +350,41 @@ func TestPrepareGitRepositoryFlatSourceDirManagedFilesRestoresMissingDeploymentF
 	require.Equal(t, "http:\n  routers: {}\n", readTestFile(t, destination, "traefik/dynamic/test.yaml"))
 }
 
+func TestPrepareGitRepositoryFlatSourceDirManagedFilesUpdateLegacyDestination(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	repoPath := filesystem.JoinPaths(tmpDir, "repo")
+	destination := filesystem.JoinPaths(tmpDir, "target")
+
+	repo := initTestRepository(t, repoPath)
+	writeTestFile(t, repoPath, "tmc-proxy/docker-compose.yml", "services:\n  existing: {}\n  added: {}\n")
+	writeTestFile(t, repoPath, "tmc-proxy/mc-expiria/config.yml", "from-git\n")
+	commitTestRepository(t, repo, "add services")
+
+	// Older unpacker releases could leave a populated destination without .git.
+	writeTestFile(t, destination, "docker-compose.yml", "services:\n  existing: {}\n")
+	writeTestFile(t, destination, "traefik/local.yml", "keep-local\n")
+	require.NoDirExists(t, filesystem.JoinPaths(destination, ".git"))
+
+	mountPath, clonePath := gitRepositoryDeploymentPaths(destination, "test-stack", "repo", true)
+	err := prepareGitRepository(exec.NewCommandExecutionContext(context.Background()), gitRepositoryOptions{
+		repository:            repoPath,
+		reference:             plumbing.NewBranchReferenceName("master").String(),
+		keep:                  true,
+		mountPath:             mountPath,
+		clonePath:             clonePath,
+		sourceDir:             "tmc-proxy",
+		unprotectMissingPaths: deploymentFileSet(deploymentFiles([]string{"docker-compose.yml"})),
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "services:\n  existing: {}\n  added: {}\n", readTestFile(t, destination, "docker-compose.yml"))
+	require.Equal(t, "from-git\n", readTestFile(t, destination, "mc-expiria/config.yml"))
+	require.Equal(t, "keep-local\n", readTestFile(t, destination, "traefik/local.yml"))
+	require.DirExists(t, filesystem.JoinPaths(destination, ".git"))
+}
+
 func TestValidateFlatDestination(t *testing.T) {
 	t.Parallel()
 

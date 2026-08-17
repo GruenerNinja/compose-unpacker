@@ -327,7 +327,18 @@ func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissi
 	if _, err := os.Stat(filesystem.JoinPaths(clonePath, ".git")); err != nil {
 		if os.IsNotExist(err) {
 			// Without Git metadata, every existing file is treated as user-owned.
-			return allExistingFiles(clonePath)
+			protectedPaths, err := allExistingFiles(clonePath)
+			if err != nil {
+				return nil, err
+			}
+
+			// Deployment files come from Git even when this directory was created by
+			// an older unpacker that did not leave Git metadata behind.
+			for managedPath := range unprotectMissingPaths {
+				delete(protectedPaths, managedPath)
+			}
+
+			return protectedPaths, nil
 		}
 
 		return nil, err
@@ -346,15 +357,13 @@ func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissi
 	// A map with empty values is Go's lightweight equivalent of HashSet<String>.
 	protected := map[string]struct{}{}
 	for path, file := range tracked {
-		dirty, missing, err := trackedFileDirty(clonePath, path, file)
-		if err != nil {
-			return nil, err
+		if _, managed := unprotectMissingPaths[path]; managed {
+			continue
 		}
 
-		if missing {
-			if _, unprotected := unprotectMissingPaths[path]; unprotected {
-				continue
-			}
+		dirty, _, err := trackedFileDirty(clonePath, path, file)
+		if err != nil {
+			return nil, err
 		}
 
 		if dirty {
@@ -379,6 +388,9 @@ func protectedRepositoryPaths(clonePath string, sourceDir string, unprotectMissi
 		relPath, err := relativeRepositoryPath(clonePath, path)
 		if err != nil {
 			return err
+		}
+		if _, managed := unprotectMissingPaths[relPath]; managed {
+			return nil
 		}
 
 		if _, ok := tracked[relPath]; !ok {

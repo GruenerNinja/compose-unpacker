@@ -41,7 +41,6 @@ func (cmd *DeployCommand) Run(cmdCtx *exec.CommandExecutionContext) error {
 		Str("repository", cmd.GitRepository).
 		Strs("composePath", cmd.ComposeRelativeFilePaths).
 		Str("destination", cmd.Destination).
-		Strs("env", cmd.Env).
 		Bool("skipTLSVerify", cmd.SkipTLSVerify).
 		Msg("Deploying Compose stack from Git repository")
 
